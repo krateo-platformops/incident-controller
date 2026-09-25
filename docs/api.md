@@ -44,7 +44,7 @@ kubectl get incidents -n krateo-system -l observability.krateo.io/alert=composit
 | `trigger` | `alert` \| `composition-condition` \| `user-ask` | writer | what started the investigation |
 | `prompt` | string | writer | the root-cause-analysis prompt sent to incident-agent |
 | `triggeredAt` | date-time | writer | when the opening firing arrived |
-| `applied` | bool | human: "I applied it", or the portal's Apply | the apply script ran; moves Open to Verifying |
+| `applied` | bool | human: "I applied it", or the portal's Apply; reset by the controller | the apply script ran. The controller consumes it: it moves Open to Verifying, appends an `apply` check and sets `applied` back to `false` |
 | `closed` | bool | human: the portal's Close | moves any state to Closed |
 
 ## status
@@ -61,7 +61,7 @@ Lifecycle and checks:
 | `howToFix.verify` | string (bash) | writer | exit `0` once the fix worked, `1` if it did not |
 | `checks[]` | at most 20 | controller | script runs, oldest first; the controller keeps the newest 20 |
 | `checks[].script` | `precondition` \| `apply` \| `verify`, required | controller | the script that ran |
-| `checks[].exit` | int 0-255 | controller | its exit code; absent for a timeout, for a pod that never ran, and for an apply a human ran outside the controller |
+| `checks[].exit` | int 0-255 | controller | its exit code; absent for a timeout, for a pod that never ran, and for the `apply` check that records a consumed `spec.applied` |
 | `checks[].at` | date-time, required | controller | when the run finished |
 | `resolution.by` | `verify` \| `user`, required | controller | `verify` with `Resolved`, `user` with `Closed` |
 | `resolution.at` | date-time, required | controller | when the incident ended |
@@ -93,7 +93,7 @@ The controller sets it on the first precondition run:
 | Status | Reason | Meaning |
 |---|---|---|
 | `True` | `PreconditionHolds` | the first run exited `1`: the script sees the incident |
-| `False` | `PreconditionPassed` | the first run exited `0`: the script cannot see the incident, so the incident is flagged and its precondition `0` is no evidence of a fix |
+| `False` | `PreconditionPassed` | the first run exited `0`: the script cannot see the incident. The incident is flagged: it stays `Open`, its precondition no longer runs, and only `spec.applied` or `spec.closed` moves it |
 
 It is absent until the first run.
 

@@ -18,7 +18,9 @@ timestamp: 2026-09-25T00:00:00Z
    `howToFix` scripts, and the incident became `Open`.
 3. The precondition exited `1` twice (`Reproduced=True`): the incident held.
 4. A human ran the apply script in a terminal and clicked "I applied it"
-   (`spec.applied: true`, the `apply` check with no exit code).
+   (`spec.applied: true`). The controller consumed it: it moved the incident
+   to `Verifying`, appended the `apply` check with no exit code, and set
+   `spec.applied` back to `false`.
 5. The verify script exited `0`: the incident is `Resolved`, by `verify`.
 
 The unit tests validate this file against the generated CRD and decode it into

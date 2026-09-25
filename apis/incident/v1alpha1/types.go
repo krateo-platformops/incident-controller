@@ -76,8 +76,9 @@ const (
 )
 
 // TypeReproduced is a condition on the first precondition run. True: it exited 1, so the script
-// sees the incident. False: it exited 0, so the script cannot see the incident; the incident is
-// flagged, and a precondition exit 0 is no evidence of a fix. Absent until the first run.
+// sees the incident. False: it exited 0, so the script cannot see the incident. Such an incident is
+// flagged: it stays Open, its precondition no longer runs, and only spec.applied or spec.closed
+// moves it. Absent until the first run.
 const TypeReproduced prv1.ConditionType = "Reproduced"
 
 // Reasons of the Reproduced condition.
@@ -122,7 +123,8 @@ type IncidentSpec struct {
 	TriggeredAt *metav1.Time `json:"triggeredAt,omitempty"`
 
 	// Applied says a human ran the apply script: in a terminal followed by "I applied it", or with
-	// the portal's Apply. It moves an Open incident to Verifying.
+	// the portal's Apply. The controller consumes it: it moves an Open incident to Verifying,
+	// appends an apply check and sets applied back to false.
 	// +optional
 	Applied bool `json:"applied,omitempty"`
 
@@ -156,7 +158,7 @@ type Check struct {
 	Script Script `json:"script"`
 
 	// Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
-	// that never ran) and for an apply a human ran outside the controller.
+	// that never ran) and on the apply check that records a consumed spec.applied.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=255
 	// +optional

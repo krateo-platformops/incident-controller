@@ -90,7 +90,8 @@ spec:
               applied:
                 description: |-
                   Applied says a human ran the apply script: in a terminal followed by "I applied it", or with
-                  the portal's Apply. It moves an Open incident to Verifying.
+                  the portal's Apply. The controller consumes it: it moves an Open incident to Verifying,
+                  appends an apply check and sets applied back to false.
                 type: boolean
               closed:
                 description: Closed says a human closed the incident. It moves any
@@ -161,7 +162,7 @@ spec:
                     exit:
                       description: |-
                         Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
-                        that never ran) and for an apply a human ran outside the controller.
+                        that never ran) and on the apply check that records a consumed spec.applied.
                       format: int32
                       maximum: 255
                       minimum: 0

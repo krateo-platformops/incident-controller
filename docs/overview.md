@@ -44,7 +44,7 @@ any state ──spec.closed──▶ Closed
 |---|---|---|
 | — | `Analyzing` | the writer's first status write |
 | `Analyzing` | `Open` | the analysis finished, or failed with `error` set |
-| `Open` | `Verifying` | precondition exit `0`, or `spec.applied` |
+| `Open` | `Verifying` | precondition exit `0`, or `spec.applied`, which the controller consumes: it appends an `apply` check and sets `applied` back to `false` |
 | `Verifying` | `Resolved` | verify exit `0`; verify retries within a settle window (~5 min) before it counts as `1` |
 | `Verifying` | `Open` | verify exit `1` |
 | any | `Closed` | `spec.closed: true` |
@@ -53,8 +53,12 @@ any state ──spec.closed──▶ Closed
 decided. `Closed` is final, and a `Resolved` incident can only become `Closed`.
 
 The first precondition run must exit `1`. An exit `0` there means the script
-cannot see the problem: the incident is flagged (`Reproduced=False`) instead
-of resolved.
+cannot see the problem, so the incident is flagged (`Reproduced=False`)
+instead of moving on: it stays `Open`, its precondition no longer runs, and
+only `spec.applied` (then verify) or `spec.closed` moves it.
+
+A failed analysis leaves the incident `Open` with `error` set; a human can
+close it. An incident with no `howToFix` scripts gets no checks run.
 
 ## The scripts
 

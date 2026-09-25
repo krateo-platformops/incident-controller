@@ -1,6 +1,8 @@
 # An Incident resolved by its verify script: the precondition held twice, a human applied the fix
-# and clicked "I applied it", and the verify script exited 0. Every field is set except
-# spec.closed and status.error, whose zero values mean "not closed" and "no failure".
+# and clicked "I applied it", and the verify script exited 0. The controller consumed
+# spec.applied, so it is back to false. Every field is set except spec.applied, spec.closed and
+# status.error, whose zero values mean "not applied since the last check", "not closed" and
+# "no failure".
 apiVersion: observability.krateo.io/v1alpha1
 kind: Incident
 metadata:
@@ -15,7 +17,6 @@ spec:
   trigger: alert
   prompt: Alert "CompositionDefinition not ready" is firing. Find the root cause.
   triggeredAt: "2026-09-25T14:00:00Z"
-  applied: true
 status:
   conditions:
     - type: Ready
