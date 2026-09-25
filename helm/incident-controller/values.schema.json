@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "type": "object",
+  "title": "incident-controller chart values",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object",
+      "title": "Global values"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string" },
+        "tag": { "type": "string", "description": "Defaults to the chart appVersion." },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" }
+      }
+    },
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "debug": { "type": "boolean" },
+        "pollInterval": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
+        "settleWindow": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
+        "syncPeriod": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
+        "maxReconcileRate": { "type": "integer", "minimum": 1 },
+        "leaderElection": { "type": "boolean" }
+      }
+    },
+    "resources": { "type": "object" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": { "type": "string", "minLength": 1 },
+        "createNamespace": { "type": "boolean" },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "serviceAccount": { "type": "string", "minLength": 1 },
+        "clusterRoles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readApiGroups": {
+          "type": "array",
+          "description": "Krateo API groups the check service account reads. A wildcard or the core group would include Secrets.",
+          "items": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$" }
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string", "description": "Defaults to the chart appVersion." },
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "resources": { "type": "object" },
+        "podSecurityContext": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "dns": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "namespace": { "type": "string" },
+                "podLabels": { "type": "object" }
+              }
+            },
+            "apiServer": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "cidr": { "type": "string" },
+                  "ports": { "type": "array", "items": { "type": "integer" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
