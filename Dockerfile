@@ -29,6 +29,6 @@ COPY --from=builder /bin/manager /bin/manager
 
 EXPOSE 8080 8081
 
-USER nonroot:nonroot
+USER 65532:65532
 
 ENTRYPOINT ["/bin/manager"]
