@@ -3,7 +3,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: incident-viewer
+  name: krateo-incident-viewer
   labels:
     {{- include "incident-controller.labels" . | nindent 4 }}
 rules:
@@ -15,7 +15,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: incident-responder
+  name: krateo-incident-responder
   labels:
     {{- include "incident-controller.labels" . | nindent 4 }}
 rules:

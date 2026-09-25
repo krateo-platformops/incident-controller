@@ -116,12 +116,12 @@ RoleBinding.
 
 | ClusterRole | Verbs on `incidents.observability.krateo.io` | Allows |
 |---|---|---|
-| `incident-viewer` | get, list, watch | reading incidents |
-| `incident-responder` | get, list, watch, patch, delete | Close (`spec.closed`), "I applied it" (`spec.applied`), Discard (delete) |
+| `krateo-incident-viewer` | get, list, watch | reading incidents |
+| `krateo-incident-responder` | get, list, watch, patch, delete | Close (`spec.closed`), "I applied it" (`spec.applied`), Discard (delete) |
 
 Neither grants `incidents/status`: only the writer and the controller change
 an incident's status. Neither carries aggregation labels.
 
 ```sh
-kubectl create clusterrolebinding sre-incident-responder --clusterrole=incident-responder --group=sre
+kubectl create clusterrolebinding sre-incident-responder --clusterrole=krateo-incident-responder --group=sre
 ```

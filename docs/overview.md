@@ -21,7 +21,7 @@ problem gone or a human closes it.
 |---|---|
 | alert-troubleshooter (the writer) | creates the Incident with its label and `spec`; writes the analysis, `howToFix`, `firings` and `lastFiredAt`; sets `Analyzing`, then `Open` |
 | incident-controller | runs precondition and verify; writes `checks`, every other state transition, `resolution` and the conditions |
-| a human, through the portal | `spec.applied` ("I applied it", or Apply) and `spec.closed` (Close), with their own token and the `incident-responder` role |
+| a human, through the portal | `spec.applied` ("I applied it", or Apply) and `spec.closed` (Close), with their own token and the `krateo-incident-responder` role |
 
 Field by field: [api](./api.md).
 
@@ -130,7 +130,7 @@ The controller never runs an apply script. Details: [configuration](./configurat
 |---|---|
 | `apis/incident/v1alpha1` | the Go types, the source of truth |
 | `helm/incident-controller-crds` | the CRD chart; its template is generated from the Go types |
-| `helm/incident-controller` | the controller chart: Deployment, RBAC, the checks namespace, the check pod template, the NetworkPolicy, the unbound `incident-viewer` and `incident-responder` roles |
+| `helm/incident-controller` | the controller chart: Deployment, RBAC, the checks namespace, the check pod template, the NetworkPolicy, the unbound `krateo-incident-viewer` and `krateo-incident-responder` roles |
 | `main.go`, `internal/controllers/incident` | the controller: `machine.go` is the state machine, `checkpod.go` the check pods, `incident.go` the provider-runtime client |
 | `check/Dockerfile` | the check pod image |
 | `examples/incident` | a sample Incident, validated by the unit tests |
