@@ -1,0 +1,8 @@
+# incident-controller — LLM doc index (unreleased)
+# One line per file; pin the version on release.
+docs/overview.md: what an Incident is, its lifecycle, who writes what, the provider-runtime mapping
+docs/api.md: the Incident CRD field by field, field ownership, the enforced rules
+apis/incident/v1alpha1/types.go: the Go types, source of truth for the CRD
+helm/incident-controller-crds/templates/observability.krateo.io_incidents.yaml: the generated Incident CRD
+examples/incident/README.md: a resolved Incident, step by step
+examples/incident/incident.yaml: the sample Incident
