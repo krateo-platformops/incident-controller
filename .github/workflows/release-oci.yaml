@@ -1,0 +1,26 @@
+# Publishes both charts (incident-controller-crds, incident-controller) on a release tag, through the
+# org reusable. It substitutes CHART_VERSION from the tag and waits for every image the charts
+# reference, including the check image in the check pod template ConfigMap.
+name: release-oci
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      chart_version:
+        description: "Chart version (CHART_VERSION). Default: the git tag."
+        required: false
+      app_version:
+        description: "App image version (APP_VERSION). Default: latest tag of the app repo."
+        required: false
+
+jobs:
+  release-oci:
+    uses: krateo-platformops/.github/.github/workflows/release-oci.yaml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      chart_version: ${{ github.event.inputs.chart_version || '' }}
+      app_version: ${{ github.event.inputs.app_version || '' }}
