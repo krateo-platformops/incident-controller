@@ -47,7 +47,8 @@ tolerations. The controller sets the rest, whatever the template says:
 - `runAsNonRoot`, the `RuntimeDefault` seccomp profile, no privilege
   escalation, all capabilities dropped, a read-only root filesystem, no host
   namespaces, no service links;
-- a 16Mi `emptyDir` at `/tmp`, which is `HOME`.
+- a 16Mi `emptyDir` at `/tmp`, which is `HOME`;
+- no DNS: `dnsPolicy: None`, with `127.0.0.1` as the only nameserver.
 
 The pod passes the `restricted` Pod Security Standard, which the checks
 namespace enforces.
@@ -71,7 +72,6 @@ namespace enforces.
 | `checks.image.*` | `ghcr.io/krateo-platformops/incident-controller-check`, appVersion | bash, kubectl and jq |
 | `checks.imagePullSecrets`, `resources`, `podSecurityContext`, `nodeSelector`, `tolerations` | | the check pod template |
 | `checks.networkPolicy.enabled` | `true` | the check NetworkPolicy |
-| `checks.networkPolicy.dns.namespace`, `dns.podLabels` | `kube-system`, `k8s-app: kube-dns` | where cluster DNS runs |
 | `checks.networkPolicy.apiServer` | `[]` | `[{cidr, ports}]`; empty looks the apiserver up at install |
 
 ## What the check pods can do
@@ -80,11 +80,15 @@ namespace enforces.
   on every resource of the groups in `checks.readApiGroups`. The schema accepts
   only dotted group names, so neither `*` nor the core group can be listed,
   and both would include Secrets. Nothing grants writes.
-- **Reach:** cluster DNS on port 53 and the apiserver, nothing else; no
-  ingress. With `checks.networkPolicy.apiServer` empty, the chart looks up the
-  `kubernetes` Service and its EndpointSlice at install and allows their
-  addresses and ports. A render without cluster access (`helm template`) finds
-  neither: the policy then allows DNS only, and the install notes say so.
+- **Reach:** the apiserver, by IP, and nothing else; no ingress. kubectl
+  finds it from `KUBERNETES_SERVICE_HOST`, so the pods need no DNS, and they
+  get none: the controller sets `dnsPolicy: None` with `127.0.0.1` as the only
+  nameserver, since a lookup that reaches cluster DNS is forwarded outside and
+  would carry data out. With `checks.networkPolicy.apiServer` empty, the chart
+  looks up the `kubernetes` Service and its EndpointSlice at install and allows
+  their addresses and ports. A render without cluster access (`helm template`)
+  finds neither: the policy then allows no egress, and the install notes say
+  so.
   Cilium does not match node addresses with an ipBlock by default; where the
   apiserver runs on the nodes, allow it with a CiliumNetworkPolicy
   (`toEntities: [kube-apiserver]`).

@@ -118,7 +118,7 @@ default), holding only the check pods and their read-only service account:
 - the service account `incident-check`, bound to `view` and to
   `incident-controller-check-reader`, which reads the listed Krateo API groups;
   no Secrets, no writes;
-- a NetworkPolicy allowing egress to cluster DNS and the apiserver only, and no
+- no DNS, and a NetworkPolicy allowing egress to the apiserver only, and no
   ingress;
 - `activeDeadlineSeconds: 60`, and the `restricted` Pod Security Standard.
 

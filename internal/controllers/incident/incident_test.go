@@ -440,6 +440,8 @@ func TestPodEnforcesTheSandbox(t *testing.T) {
 	loose := CheckPods{Namespace: checksNamespace, Timeout: time.Minute, Template: corev1.PodSpec{
 		ServiceAccountName: "incident-check",
 		HostNetwork:        true,
+		DNSPolicy:          corev1.DNSClusterFirst,
+		DNSConfig:          &corev1.PodDNSConfig{Nameservers: []string{"10.96.0.10"}, Searches: []string{"svc.cluster.local"}},
 		Containers: []corev1.Container{{
 			Name: "anything", Image: "img",
 			SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(true), AllowPrivilegeEscalation: ptr.To(true)},
@@ -460,6 +462,11 @@ func TestPodEnforcesTheSandbox(t *testing.T) {
 		t.Error("the pod restarts")
 	case p.Spec.Containers[0].Name != containerName:
 		t.Error("the container is not named check")
+	case p.Spec.DNSPolicy != corev1.DNSNone:
+		t.Errorf("dnsPolicy = %s, want None", p.Spec.DNSPolicy)
+	}
+	if d := cmp.Diff(&corev1.PodDNSConfig{Nameservers: []string{"127.0.0.1"}}, p.Spec.DNSConfig); d != "" {
+		t.Errorf("dnsConfig (-want +got):\n%s", d)
 	}
 	if loose.Template.Containers[0].SecurityContext.Privileged == nil || !*loose.Template.Containers[0].SecurityContext.Privileged {
 		t.Error("the template was modified")

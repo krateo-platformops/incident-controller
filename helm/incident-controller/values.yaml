@@ -90,12 +90,7 @@ checks:
   tolerations: []
   networkPolicy:
     enabled: true
-    # Egress to cluster DNS.
-    dns:
-      namespace: kube-system
-      podLabels:
-        k8s-app: kube-dns
-    # Egress to the apiserver: [{cidr: 10.0.0.1/32, ports: [443]}]. Empty means the kubernetes
-    # Service and its EndpointSlice are looked up at install; a render without cluster access
-    # (helm template) then allows DNS only, so checks cannot reach the apiserver.
+    # The only egress: the apiserver, [{cidr: 10.0.0.1/32, ports: [443]}]. Empty means the
+    # kubernetes Service and its EndpointSlice are looked up at install; a render without cluster
+    # access (helm template) then allows no egress at all, so checks cannot reach the apiserver.
     apiServer: []

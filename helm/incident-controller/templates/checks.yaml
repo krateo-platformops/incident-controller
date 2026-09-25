@@ -90,7 +90,8 @@ subjects:
 {{- end }}
 {{- end }}
 ---
-# Check pods reach cluster DNS and the apiserver, nothing else, and accept no traffic.
+# Check pods reach the apiserver, by IP, and nothing else; they accept no traffic. No DNS: the
+# controller points their resolver at nothing.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -105,19 +106,10 @@ spec:
   policyTypes:
     - Ingress
     - Egress
+  {{- if not $apiServer }}
+  egress: []
+  {{- else }}
   egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $np.dns.namespace }}
-          podSelector:
-            matchLabels:
-              {{- toYaml $np.dns.podLabels | nindent 14 }}
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
     {{- range $apiServer }}
     - to:
         - ipBlock:
@@ -128,4 +120,5 @@ spec:
           port: {{ . }}
         {{- end }}
     {{- end }}
+  {{- end }}
 {{- end }}

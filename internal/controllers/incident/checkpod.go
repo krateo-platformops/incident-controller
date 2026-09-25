@@ -31,6 +31,9 @@ const (
 )
 
 const (
+	// noNameserver is the check pods' only nameserver; nothing listens there.
+	noNameserver = "127.0.0.1"
+
 	containerName = "check"
 	scriptVolume  = "script"
 	tmpVolume     = "tmp"
@@ -120,6 +123,10 @@ func (p CheckPods) Pod(inc *v1alpha1.Incident, s v1alpha1.Script) *corev1.Pod {
 	spec.AutomountServiceAccountToken = ptr.To(true)
 	spec.EnableServiceLinks = ptr.To(false)
 	spec.HostNetwork, spec.HostPID, spec.HostIPC = false, false, false
+	// No name resolution: a lookup reaching cluster DNS is forwarded outside and carries data out.
+	// kubectl reaches the apiserver by the IP in KUBERNETES_SERVICE_HOST.
+	spec.DNSPolicy = corev1.DNSNone
+	spec.DNSConfig = &corev1.PodDNSConfig{Nameservers: []string{noNameserver}}
 	if spec.SecurityContext == nil {
 		spec.SecurityContext = &corev1.PodSecurityContext{}
 	}

@@ -86,14 +86,6 @@
           "additionalProperties": false,
           "properties": {
             "enabled": { "type": "boolean" },
-            "dns": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "namespace": { "type": "string" },
-                "podLabels": { "type": "object" }
-              }
-            },
             "apiServer": {
               "type": "array",
               "items": {
