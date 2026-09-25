@@ -45,14 +45,24 @@ any state ──spec.closed──▶ Closed
 | — | `Analyzing` | the writer's first status write |
 | `Analyzing` | `Open` | the analysis finished, or failed with `error` set |
 | `Open` | `Verifying` | precondition exit `0`, or `spec.applied`, which the controller consumes: it appends an `apply` check and sets `applied` back to `false` |
-| `Verifying` | `Resolved` | verify exit `0`; verify retries within a settle window (~5 min) before it counts as `1` |
-| `Verifying` | `Open` | verify exit `1` |
+| `Verifying` | `Resolved` | verify exit `0`, at any time |
+| `Verifying` | `Open` | verify exit `1` once the settle window has passed |
 | any | `Closed` | `spec.closed: true` |
+
+The settle window (5 minutes by default) gives a fix time to take effect. It
+starts when the incident enters `Verifying`: at the precondition exit `0` or
+the `apply` check that moved it. Inside the window a verify exit `1` is
+recorded and verify runs again at the next poll; the first exit `1` at or
+after the window's end moves the incident back to `Open`. An exit other than
+`0` or `1`, or a timeout, never moves it, inside the window or after. A human
+applying again while `Verifying` appends another `apply` check, which restarts
+the window.
 
 `Resolved` means a script proved the problem gone; `Closed` means a person
 decided. `Closed` is final, and a `Resolved` incident can only become `Closed`.
 
-The first precondition run must exit `1`. An exit `0` there means the script
+The first precondition run with a verdict must exit `1`; runs that end
+without `0` or `1` do not count. An exit `0` there means the script
 cannot see the problem, so the incident is flagged (`Reproduced=False`)
 instead of moving on: it stays `Open`, its precondition no longer runs, and
 only `spec.applied` (then verify) or `spec.closed` moves it.
@@ -83,12 +93,36 @@ the check pod of the current step.
 
 | provider-runtime | incident-controller |
 |---|---|
-| `ExternalClient.Observe` | reads the current check pod's exit code into `status.checks` and `status.state` |
-| `Create` | no check pod for the current step: starts one, precondition when `Open`, verify when `Verifying` |
-| `Update` | the last check is older than the poll interval: starts the next one |
-| `Delete` + finalizer | the Incident is deleted: removes its check pods |
-| `WithPollInterval(1m)` | the 60 s check cadence |
-| `krateo.io/paused` | pauses the checks of one incident |
+| `ExternalClient.Observe` | reads the incident's check pods; records a finished one in `status.checks` and applies its transition; applies `spec.closed` and `spec.applied`. It changes nothing but the Incident held in memory |
+| `Create` | no check pod for the current step and one is due: starts one, precondition when `Open`, verify when `Verifying` |
+| `Update` | persists the status, then sets `spec.applied` back to `false`, deletes finished and stale check pods, and starts the next check when it is due |
+| `Delete` + finalizer | the Incident is deleted: removes its check pods and ConfigMaps |
+| `WithPollInterval(1m)` | the 60 s check cadence; a poll-interval hook requeues when the next check falls due |
+| `krateo.io/paused` | pauses one incident: no checks, no transitions, `spec.closed` included |
+
+A check is due a poll interval after the last one ended. A check pod's watch
+events requeue its incident, so a finished check is read at once. Update writes
+the status before anything else, so a result is never lost with its pod and a
+consumed `spec.applied` is never lost with its flag; result times are
+deterministic, so a result whose pod outlives a failed delete is not recorded
+twice. A running check of a script that is no longer current (the incident was
+applied or closed meanwhile) is deleted and its result dropped.
+
+## Check pods
+
+Each run is a pod in a dedicated namespace (`krateo-incident-checks` by
+default), holding only the check pods and their read-only service account:
+
+- the script from a ConfigMap owned by the pod, run with bash; the image has
+  bash, kubectl and jq;
+- the service account `incident-check`, bound to `view` and to
+  `incident-controller-check-reader`, which reads the listed Krateo API groups;
+  no Secrets, no writes;
+- a NetworkPolicy allowing egress to cluster DNS and the apiserver only, and no
+  ingress;
+- `activeDeadlineSeconds: 60`, and the `restricted` Pod Security Standard.
+
+The controller never runs an apply script. Details: [configuration](./configuration.md).
 
 ## Layout
 
@@ -96,4 +130,7 @@ the check pod of the current step.
 |---|---|
 | `apis/incident/v1alpha1` | the Go types, the source of truth |
 | `helm/incident-controller-crds` | the CRD chart; its template is generated from the Go types |
+| `helm/incident-controller` | the controller chart: Deployment, RBAC, the checks namespace, the check pod template, the NetworkPolicy |
+| `main.go`, `internal/controllers/incident` | the controller: `machine.go` is the state machine, `checkpod.go` the check pods, `incident.go` the provider-runtime client |
+| `check/Dockerfile` | the check pod image |
 | `examples/incident` | a sample Incident, validated by the unit tests |
