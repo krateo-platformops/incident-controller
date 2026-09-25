@@ -1,0 +1,101 @@
+# An Incident resolved by its verify script: the precondition held twice, a human applied the fix
+# and clicked "I applied it", and the verify script exited 0. Every field is set except
+# spec.closed and status.error, whose zero values mean "not closed" and "no failure".
+apiVersion: observability.krateo.io/v1alpha1
+kind: Incident
+metadata:
+  name: cd-not-ready-20260925-140000
+  namespace: krateo-system
+  labels:
+    observability.krateo.io/alert: compositiondefinitions-not-ready
+spec:
+  alertRef:
+    name: compositiondefinitions-not-ready
+    namespace: krateo-system
+  trigger: alert
+  prompt: Alert "CompositionDefinition not ready" is firing. Find the root cause.
+  triggeredAt: "2026-09-25T14:00:00Z"
+  applied: true
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: Available
+      lastTransitionTime: "2026-09-25T14:09:00Z"
+    - type: Synced
+      status: "True"
+      reason: ReconcileSuccess
+      lastTransitionTime: "2026-09-25T14:03:00Z"
+    - type: Reproduced
+      status: "True"
+      reason: PreconditionHolds
+      message: the first precondition run exited 1
+      lastTransitionTime: "2026-09-25T14:03:00Z"
+  state: Resolved
+  firings: 7
+  lastFiredAt: "2026-09-25T14:07:00Z"
+  howToFix:
+    precondition: |
+      #!/usr/bin/env bash
+      # exit 1 = incident holds · exit 0 = gone
+      s=$(kubectl get compositiondefinition fireworksapp -n fireworksapp-system \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+      [ "$s" = "False" ] && exit 1
+      exit 0
+    apply: |
+      #!/usr/bin/env bash
+      # chart 1.1.9 is missing from the repo; 1.1.10 exists
+      kubectl patch compositiondefinition fireworksapp -n fireworksapp-system \
+        --type merge -p '{"spec":{"chart":{"version":"1.1.10"}}}'
+    verify: |
+      #!/usr/bin/env bash
+      # exit 0 = fixed · exit 1 = still holds
+      kubectl wait compositiondefinition fireworksapp -n fireworksapp-system \
+        --for=condition=Ready --timeout=45s >/dev/null || exit 1
+      exit 0
+  checks:
+    - script: precondition
+      exit: 1
+      at: "2026-09-25T14:03:00Z"
+    - script: precondition
+      exit: 1
+      at: "2026-09-25T14:04:00Z"
+    - script: apply
+      at: "2026-09-25T14:08:00Z"
+    - script: verify
+      exit: 0
+      at: "2026-09-25T14:09:00Z"
+  resolution:
+    by: verify
+    at: "2026-09-25T14:09:00Z"
+  report: |
+    ## Summary
+    CompositionDefinition fireworksapp is not Ready: its chart version 1.1.9 is missing from the repository.
+  rootCause:
+    statement: CompositionDefinition fireworksapp pins chart version 1.1.9, which the chart repository does not serve.
+    confidence: "0.85"
+    category: config
+  sources:
+    - type: object
+      ref: compositiondefinitions.core.krateo.io/fireworksapp -n fireworksapp-system
+      excerpt: 'Ready=False: chart version 1.1.9 not found'
+    - type: events
+      ref: events -n fireworksapp-system
+      excerpt: 'Warning FetchFailed: 404 fireworksapp-1.1.9.tgz'
+  reasoningTrace:
+    - step: 1
+      statement: The CompositionDefinition reports Ready=False because its chart cannot be fetched.
+      evidenceRefs: [0]
+    - step: 2
+      statement: The repository returns 404 for version 1.1.9 only.
+      evidenceRefs: [0, 1]
+  analyzedResources:
+    - gvr: core.krateo.io/v1alpha1/compositiondefinitions
+      name: fireworksapp
+      namespace: fireworksapp-system
+      whatWasRead: status + last events
+  missingContext:
+    - the chart repository index
+  assumptions:
+    - version 1.1.10 is compatible with the existing compositions
+  completedAt: "2026-09-25T14:02:00Z"
