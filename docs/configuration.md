@@ -102,3 +102,22 @@ namespace enforces.
 The controller can create pods only in the checks namespace, where the only
 service account with any rights is the read-only check one. It reads no
 Secrets and runs no apply script.
+
+## Roles for people
+
+The portal's Close, "I applied it" and Discard act on the Incident with the
+clicking user's own token. The chart ships two ClusterRoles for that and binds
+neither; bind them to your groups, cluster-wide or per namespace with a
+RoleBinding.
+
+| ClusterRole | Verbs on `incidents.observability.krateo.io` | Allows |
+|---|---|---|
+| `incident-viewer` | get, list, watch | reading incidents |
+| `incident-responder` | get, list, watch, patch, delete | Close (`spec.closed`), "I applied it" (`spec.applied`), Discard (delete) |
+
+Neither grants `incidents/status`: only the writer and the controller change
+an incident's status. Neither carries aggregation labels.
+
+```sh
+kubectl create clusterrolebinding sre-incident-responder --clusterrole=incident-responder --group=sre
+```

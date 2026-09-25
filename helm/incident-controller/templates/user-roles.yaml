@@ -1,0 +1,24 @@
+# Roles for the people who act on incidents through the portal, which calls the apiserver with the
+# clicking user's own token. The chart binds neither: bind them to your groups.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: incident-viewer
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["observability.krateo.io"]
+    resources: ["incidents"]
+    verbs: ["get", "list", "watch"]
+---
+# Close ("spec.closed"), "I applied it" ("spec.applied") and Discard (delete).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: incident-responder
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["observability.krateo.io"]
+    resources: ["incidents"]
+    verbs: ["get", "list", "watch", "patch", "delete"]
