@@ -2,6 +2,13 @@
 # One line per file; pin the version on release.
 docs/overview.md: what an Incident is, its lifecycle, who writes what, the provider-runtime mapping
 docs/api.md: the Incident CRD field by field, field ownership, the enforced rules
+docs/configuration.md: controller flags, chart values, check pod RBAC and network policy
+main.go: the manager: flags, cache scoped to the checks namespace, controller setup
+internal/controllers/incident/machine.go: the state machine
+internal/controllers/incident/incident.go: the provider-runtime external client (Observe/Create/Update/Delete)
+internal/controllers/incident/checkpod.go: the check pod and its script ConfigMap
+check/Dockerfile: the check pod image (bash, kubectl, jq)
+helm/incident-controller/values.yaml: the controller chart values
 apis/incident/v1alpha1/types.go: the Go types, source of truth for the CRD
 helm/incident-controller-crds/templates/observability.krateo.io_incidents.yaml: the generated Incident CRD
 examples/incident/README.md: a resolved Incident, step by step

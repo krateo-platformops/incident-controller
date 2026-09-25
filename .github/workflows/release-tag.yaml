@@ -1,0 +1,17 @@
+# Builds and pushes both images on a release tag, through the org reusable: the controller
+# (ghcr.io/<owner>/incident-controller) and the check pod image
+# (ghcr.io/<owner>/incident-controller-check). The chart references both at its appVersion, the tag.
+name: release-tag
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+jobs:
+  build:
+    uses: krateo-platformops/.github/.github/workflows/component-image-build.yaml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      modules: '[{"mod":"incident-controller","context":"."},{"mod":"incident-controller-check","context":"check"}]'

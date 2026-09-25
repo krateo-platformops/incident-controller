@@ -1,0 +1,17 @@
+# Builds both images on a pull request without pushing them.
+name: release-pullrequest
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    uses: krateo-platformops/.github/.github/workflows/component-image-build.yaml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      modules: '[{"mod":"incident-controller","context":"."},{"mod":"incident-controller-check","context":"check"}]'
+      push: false

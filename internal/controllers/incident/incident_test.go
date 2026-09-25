@@ -1,0 +1,598 @@
+package incident
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	psaapi "k8s.io/pod-security-admission/api"
+	"k8s.io/pod-security-admission/policy"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/krateo-platformops/plumbing/kubeutil/event"
+	"github.com/krateo-platformops/provider-runtime/pkg/logging"
+	"github.com/krateo-platformops/provider-runtime/pkg/meta"
+	"github.com/krateo-platformops/provider-runtime/pkg/reconciler"
+	"github.com/krateo-platformops/provider-runtime/pkg/test"
+
+	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+)
+
+const checksNamespace = "krateo-incident-checks"
+
+var template = corev1.PodSpec{
+	ServiceAccountName: "incident-check",
+	Containers:         []corev1.Container{{Name: "check", Image: "ghcr.io/krateo-platformops/incident-controller-check:0.1.0"}},
+}
+
+var pods = CheckPods{Namespace: checksNamespace, Template: template, Timeout: time.Minute}
+
+// kube is a provider-runtime MockClient over an in-memory set of check pods and ConfigMaps. It
+// records every write in order.
+type kube struct {
+	*test.MockClient
+	pods      []corev1.Pod
+	cms       []corev1.ConfigMap
+	created   []client.Object
+	calls     []string
+	statusErr error
+}
+
+func newKube(p ...corev1.Pod) *kube {
+	k := &kube{pods: p}
+	m := test.NewMockClient()
+	m.MockList = func(_ context.Context, l client.ObjectList, _ ...client.ListOption) error {
+		switch l := l.(type) {
+		case *corev1.PodList:
+			l.Items = append([]corev1.Pod(nil), k.pods...)
+		case *corev1.ConfigMapList:
+			l.Items = append([]corev1.ConfigMap(nil), k.cms...)
+		}
+		return nil
+	}
+	m.MockStatusUpdate = func(_ context.Context, _ client.Object, _ ...client.SubResourceUpdateOption) error {
+		k.calls = append(k.calls, "update status")
+		return k.statusErr
+	}
+	m.MockUpdate = func(_ context.Context, o client.Object, _ ...client.UpdateOption) error {
+		k.calls = append(k.calls, "update spec applied="+boolString(o.(*v1alpha1.Incident).Spec.Applied))
+		return nil
+	}
+	m.MockDelete = func(_ context.Context, o client.Object, _ ...client.DeleteOption) error {
+		k.calls = append(k.calls, "delete "+kindOf(o)+" "+o.GetName())
+		return nil
+	}
+	m.MockCreate = func(_ context.Context, o client.Object, _ ...client.CreateOption) error {
+		k.calls = append(k.calls, "create "+kindOf(o)+" "+o.GetName())
+		for _, p := range k.pods {
+			if p.Name == o.GetName() && kindOf(o) == "pod" {
+				return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "pods"}, p.Name)
+			}
+		}
+		if p, ok := o.(*corev1.Pod); ok {
+			p.UID = types.UID("pod-uid-" + p.Name)
+		}
+		k.created = append(k.created, o)
+		return nil
+	}
+	m.MockGet = func(_ context.Context, key client.ObjectKey, o client.Object) error {
+		k.calls = append(k.calls, "get "+kindOf(o)+" "+key.Name)
+		for _, p := range k.pods {
+			if p.Name == key.Name {
+				p.DeepCopyInto(o.(*corev1.Pod))
+				return nil
+			}
+		}
+		return apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, key.Name)
+	}
+	k.MockClient = m
+	return k
+}
+
+func boolString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+func kindOf(o client.Object) string {
+	switch o.(type) {
+	case *corev1.Pod:
+		return "pod"
+	case *corev1.ConfigMap:
+		return "configmap"
+	}
+	return "object"
+}
+
+func newExternal(k *kube, now time.Time) *external {
+	return &external{
+		kube: k, cfg: cfg, pods: pods,
+		log: logging.NewNopLogger(), rec: event.NewNopRecorder(),
+		now: func() time.Time { return now },
+	}
+}
+
+// checkPod is a check pod of inc for s, created at created. A nil code keeps it running.
+func checkPod(inc *v1alpha1.Incident, s v1alpha1.Script, created time.Time, code *int32, finished time.Time) corev1.Pod {
+	p := pods.Pod(inc, s)
+	p.CreationTimestamp = metav1.NewTime(created)
+	p.Status.Phase = corev1.PodRunning
+	p.Status.StartTime = ptr.To(metav1.NewTime(created))
+	if code != nil {
+		p.Status.Phase = corev1.PodSucceeded
+		if *code != 0 {
+			p.Status.Phase = corev1.PodFailed
+		}
+		p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: containerName, State: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{ExitCode: *code, FinishedAt: metav1.NewTime(finished)},
+		}}}
+	}
+	return *p
+}
+
+func TestObserve(t *testing.T) {
+	now := t0.Add(10 * time.Minute)
+	open := func(opts ...incOpt) *v1alpha1.Incident {
+		return newIncident(v1alpha1.StateOpen, append([]incOpt{withReproduced(metav1.ConditionTrue)}, opts...)...)
+	}
+	lastRun := withChecks(check(v1alpha1.ScriptPrecondition, exit(1), 9*time.Minute+30*time.Second))
+
+	cases := []struct {
+		name      string
+		inc       *v1alpha1.Incident
+		pods      func(inc *v1alpha1.Incident) []corev1.Pod
+		want      reconciler.ExternalObservation
+		wantState v1alpha1.State
+		wantStale int
+		wantCalls []string // of the Update that follows, when the observation asks for one
+	}{
+		{
+			name:      "a due check with no pod is created",
+			inc:       open(),
+			want:      reconciler.ExternalObservation{ResourceExists: false},
+			wantState: v1alpha1.StateOpen,
+		},
+		{
+			name:      "a check that is not due waits",
+			inc:       open(lastRun),
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			wantState: v1alpha1.StateOpen,
+		},
+		{
+			name: "a running check is up to date",
+			inc:  open(),
+			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
+				return []corev1.Pod{checkPod(inc, v1alpha1.ScriptPrecondition, now.Add(-10*time.Second), nil, time.Time{})}
+			},
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			wantState: v1alpha1.StateOpen,
+		},
+		{
+			name: "a finished precondition is recorded before its pod is deleted",
+			inc:  open(),
+			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
+				return []corev1.Pod{checkPod(inc, v1alpha1.ScriptPrecondition, now.Add(-30*time.Second), exit(0), now.Add(-20*time.Second))}
+			},
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			wantState: v1alpha1.StateVerifying,
+			wantStale: 1,
+			wantCalls: []string{"update status", "delete pod check-0b7c3a3e1d2f-precondition-0"},
+		},
+		{
+			name: "a result already recorded is not recorded again",
+			inc:  open(withChecks(check(v1alpha1.ScriptPrecondition, exit(1), 9*time.Minute+40*time.Second))),
+			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
+				p := checkPod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, now.Add(-30*time.Second), exit(1), now.Add(-20*time.Second))
+				return []corev1.Pod{p}
+			},
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			wantState: v1alpha1.StateOpen,
+			wantStale: 1,
+			wantCalls: []string{"delete pod check-0b7c3a3e1d2f-precondition-0"},
+		},
+		{
+			name: "the result of a script no longer current is dropped",
+			inc:  newIncident(v1alpha1.StateVerifying, withChecks(check(v1alpha1.ScriptApply, nil, 9*time.Minute+50*time.Second))),
+			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
+				return []corev1.Pod{checkPod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, now.Add(-30*time.Second), exit(0), now.Add(-5*time.Second))}
+			},
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			wantState: v1alpha1.StateVerifying,
+			wantStale: 1,
+			wantCalls: []string{"delete pod check-0b7c3a3e1d2f-precondition-0"},
+		},
+		{
+			name: "a pod that never finished is a timeout",
+			inc:  open(),
+			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
+				p := checkPod(inc, v1alpha1.ScriptPrecondition, now.Add(-3*time.Minute), nil, time.Time{})
+				p.Status.Phase = corev1.PodPending
+				return []corev1.Pod{p}
+			},
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			wantState: v1alpha1.StateOpen,
+			wantStale: 1,
+			// The timeout is recorded at its deadline, a poll interval ago, so the next run is due.
+			wantCalls: []string{
+				"update status",
+				"delete pod check-0b7c3a3e1d2f-precondition-0",
+				"create pod check-0b7c3a3e1d2f-precondition-1790345340",
+				"create configmap check-0b7c3a3e1d2f-precondition-1790345340",
+			},
+		},
+		{
+			name:      "spec.applied is persisted in the status before it is reset",
+			inc:       open(withSpec(true, false), lastRun),
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			wantState: v1alpha1.StateVerifying,
+			wantCalls: []string{"update status", "update spec applied=false"},
+		},
+		{
+			name: "closing deletes the running check",
+			inc:  open(withSpec(false, true)),
+			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
+				return []corev1.Pod{checkPod(inc, v1alpha1.ScriptPrecondition, now.Add(-10*time.Second), nil, time.Time{})}
+			},
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			wantState: v1alpha1.StateClosed,
+			wantStale: 1,
+			wantCalls: []string{"update status", "delete pod check-0b7c3a3e1d2f-precondition-0"},
+		},
+		{
+			name: "a flagged incident runs no precondition",
+			inc:  newIncident(v1alpha1.StateOpen, withReproduced(metav1.ConditionFalse)),
+			want: reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			// Nothing to create: the precondition no longer runs.
+			wantState: v1alpha1.StateOpen,
+		},
+		{
+			name:      "an incident without scripts runs no check",
+			inc:       newIncident(v1alpha1.StateOpen, withoutHowToFix),
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			wantState: v1alpha1.StateOpen,
+		},
+		{
+			name: "an interrupted create is adopted",
+			inc: open(func(i *v1alpha1.Incident) {
+				meta.SetExternalCreatePending(i, now.Add(-time.Minute))
+			}),
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			wantState: v1alpha1.StateOpen,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p []corev1.Pod
+			if tc.pods != nil {
+				p = tc.pods(tc.inc)
+			}
+			k := newKube(p...)
+			e := newExternal(k, now)
+			obs, err := e.Observe(context.Background(), tc.inc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			obs.Diff = ""
+			if d := cmp.Diff(tc.want, obs); d != "" {
+				t.Errorf("observation (-want +got):\n%s", d)
+			}
+			if tc.inc.Status.State != tc.wantState {
+				t.Errorf("state = %s, want %s", tc.inc.Status.State, tc.wantState)
+			}
+			if n := len(e.plan.stale); n != tc.wantStale {
+				t.Errorf("stale pods = %d, want %d", n, tc.wantStale)
+			}
+			if obs.ResourceExists && !obs.ResourceUpToDate {
+				if err := e.Update(context.Background(), tc.inc); err != nil {
+					t.Fatal(err)
+				}
+				if d := cmp.Diff(tc.wantCalls, k.calls); d != "" {
+					t.Errorf("Update calls (-want +got):\n%s", d)
+				}
+			}
+		})
+	}
+}
+
+func TestObserveDeleting(t *testing.T) {
+	inc := newIncident(v1alpha1.StateOpen, func(i *v1alpha1.Incident) { i.DeletionTimestamp = ptr.To(metav1.NewTime(t0)) })
+	for _, tc := range []struct {
+		name string
+		k    *kube
+		want bool
+	}{
+		{name: "check pods left", k: newKube(checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{})), want: true},
+		{name: "a ConfigMap left", k: func() *kube { k := newKube(); k.cms = []corev1.ConfigMap{{}}; return k }(), want: true},
+		{name: "nothing left", k: newKube(), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obs, err := newExternal(tc.k, t0).Observe(context.Background(), inc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if obs.ResourceExists != tc.want {
+				t.Errorf("ResourceExists = %v, want %v", obs.ResourceExists, tc.want)
+			}
+		})
+	}
+}
+
+func TestUpdateStopsWhenTheStatusCannotBePersisted(t *testing.T) {
+	now := t0.Add(time.Minute)
+	inc := newIncident(v1alpha1.StateOpen, withSpec(true, false))
+	k := newKube(checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(1), t0.Add(10*time.Second)))
+	k.statusErr = errors.New("conflict")
+	e := newExternal(k, now)
+	if _, err := e.Observe(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Update(context.Background(), inc); err == nil {
+		t.Fatal("want an error")
+	}
+	if d := cmp.Diff([]string{"update status"}, k.calls); d != "" {
+		t.Errorf("calls (-want +got):\n%s", d)
+	}
+}
+
+func TestUpdateStartsTheNextDueCheck(t *testing.T) {
+	now := t0.Add(10 * time.Minute)
+	// A result recorded long ago whose pod is still there: delete it and start the next run.
+	inc := newIncident(v1alpha1.StateOpen, withReproduced(metav1.ConditionTrue),
+		withChecks(check(v1alpha1.ScriptPrecondition, exit(1), time.Minute)))
+	old := checkPod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, t0, exit(1), t0.Add(time.Minute))
+	k := newKube(old)
+	e := newExternal(k, now)
+	if _, err := e.Observe(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Update(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"delete pod check-0b7c3a3e1d2f-precondition-0",
+		"create pod check-0b7c3a3e1d2f-precondition-1790344860",
+		"create configmap check-0b7c3a3e1d2f-precondition-1790344860",
+	}
+	if d := cmp.Diff(want, k.calls); d != "" {
+		t.Errorf("calls (-want +got):\n%s", d)
+	}
+}
+
+func TestCreate(t *testing.T) {
+	inc := newIncident(v1alpha1.StateOpen)
+	k := newKube()
+	if err := newExternal(k, t0).Create(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	if len(k.created) != 2 {
+		t.Fatalf("created %d objects, want a pod and a ConfigMap", len(k.created))
+	}
+	pod, cm := k.created[0].(*corev1.Pod), k.created[1].(*corev1.ConfigMap)
+
+	if pod.Namespace != checksNamespace || cm.Namespace != checksNamespace {
+		t.Errorf("namespaces = %s, %s, want %s", pod.Namespace, cm.Namespace, checksNamespace)
+	}
+	if got := pod.Spec.ServiceAccountName; got != "incident-check" {
+		t.Errorf("serviceAccountName = %s", got)
+	}
+	if got := *pod.Spec.ActiveDeadlineSeconds; got != 60 {
+		t.Errorf("activeDeadlineSeconds = %d, want 60", got)
+	}
+	if got := pod.Labels[LabelComponent]; got != ComponentCheck {
+		t.Errorf("component label = %q", got)
+	}
+	if got := pod.Annotations[annotationIncidentName]; got != inc.Name {
+		t.Errorf("incident annotation = %q", got)
+	}
+	if d := cmp.Diff([]string{"bash", "/check/check.sh"}, pod.Spec.Containers[0].Command); d != "" {
+		t.Errorf("command (-want +got):\n%s", d)
+	}
+	if got := cm.Data[scriptKey]; got != inc.Status.HowToFix.Precondition {
+		t.Errorf("script = %q, want the precondition", got)
+	}
+	if o := cm.OwnerReferences; len(o) != 1 || o[0].UID != pod.UID || o[0].Kind != "Pod" {
+		t.Errorf("ConfigMap owner = %+v, want the pod", o)
+	}
+}
+
+func TestCreateAfterAPartialCreate(t *testing.T) {
+	inc := newIncident(v1alpha1.StateOpen)
+	k := newKube(*pods.Pod(inc, v1alpha1.ScriptPrecondition))
+	if err := newExternal(k, t0).Create(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"create pod check-0b7c3a3e1d2f-precondition-0",
+		"get pod check-0b7c3a3e1d2f-precondition-0",
+		"create configmap check-0b7c3a3e1d2f-precondition-0",
+	}
+	if d := cmp.Diff(want, k.calls); d != "" {
+		t.Errorf("calls (-want +got):\n%s", d)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	inc := newIncident(v1alpha1.StateOpen)
+	k := newKube(checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{}))
+	k.cms = []corev1.ConfigMap{*pods.ConfigMap(inc, &k.pods[0], v1alpha1.ScriptPrecondition)}
+	if err := newExternal(k, t0).Delete(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"delete pod check-0b7c3a3e1d2f-precondition-0", "delete configmap check-0b7c3a3e1d2f-precondition-0"}
+	if d := cmp.Diff(want, k.calls); d != "" {
+		t.Errorf("calls (-want +got):\n%s", d)
+	}
+}
+
+func TestPodEnforcesTheSandbox(t *testing.T) {
+	loose := CheckPods{Namespace: checksNamespace, Timeout: time.Minute, Template: corev1.PodSpec{
+		ServiceAccountName: "incident-check",
+		HostNetwork:        true,
+		DNSPolicy:          corev1.DNSClusterFirst,
+		DNSConfig:          &corev1.PodDNSConfig{Nameservers: []string{"10.96.0.10"}, Searches: []string{"svc.cluster.local"}},
+		Containers: []corev1.Container{{
+			Name: "anything", Image: "img",
+			SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(true), AllowPrivilegeEscalation: ptr.To(true)},
+		}},
+	}}
+	p := loose.Pod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition)
+	sc := p.Spec.Containers[0].SecurityContext
+	switch {
+	case p.Spec.HostNetwork:
+		t.Error("hostNetwork is not disabled")
+	case *sc.Privileged || *sc.AllowPrivilegeEscalation:
+		t.Error("privileges are not dropped")
+	case !*sc.ReadOnlyRootFilesystem || !*sc.RunAsNonRoot || !*p.Spec.SecurityContext.RunAsNonRoot:
+		t.Error("the root filesystem is writable or root is allowed")
+	case len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL":
+		t.Error("capabilities are not all dropped")
+	case p.Spec.RestartPolicy != corev1.RestartPolicyNever:
+		t.Error("the pod restarts")
+	case p.Spec.Containers[0].Name != containerName:
+		t.Error("the container is not named check")
+	case p.Spec.DNSPolicy != corev1.DNSNone:
+		t.Errorf("dnsPolicy = %s, want None", p.Spec.DNSPolicy)
+	}
+	if d := cmp.Diff(&corev1.PodDNSConfig{Nameservers: []string{"127.0.0.1"}}, p.Spec.DNSConfig); d != "" {
+		t.Errorf("dnsConfig (-want +got):\n%s", d)
+	}
+	if loose.Template.Containers[0].SecurityContext.Privileged == nil || !*loose.Template.Containers[0].SecurityContext.Privileged {
+		t.Error("the template was modified")
+	}
+}
+
+func TestResultOf(t *testing.T) {
+	inc := newIncident(v1alpha1.StateOpen)
+	now := t0.Add(time.Minute)
+	deadline := func(p corev1.Pod) corev1.Pod {
+		p.Status.Phase, p.Status.Reason = corev1.PodFailed, "DeadlineExceeded"
+		return p
+	}
+	cases := []struct {
+		name     string
+		pod      corev1.Pod
+		now      time.Time
+		wantDone bool
+		wantExit *int32
+		wantAt   time.Time
+	}{
+		{name: "running", pod: checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{}), now: now},
+		{name: "exit 0", pod: checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(0), t0.Add(5*time.Second)), now: now,
+			wantDone: true, wantExit: exit(0), wantAt: t0.Add(5 * time.Second)},
+		{name: "exit 1", pod: checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(1), t0.Add(5*time.Second)), now: now,
+			wantDone: true, wantExit: exit(1), wantAt: t0.Add(5 * time.Second)},
+		{name: "another exit", pod: checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(2), t0.Add(5*time.Second)), now: now,
+			wantDone: true, wantExit: exit(2), wantAt: t0.Add(5 * time.Second)},
+		{name: "killed at the deadline", pod: deadline(checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(137), t0.Add(time.Minute))), now: now,
+			wantDone: true, wantAt: t0.Add(time.Minute)},
+		{name: "failed before running", pod: func() corev1.Pod {
+			p := checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{})
+			p.Status.Phase = corev1.PodFailed
+			return p
+		}(), now: now, wantDone: true, wantAt: t0.Add(time.Minute)},
+		{name: "pending inside its deadline", pod: func() corev1.Pod {
+			p := checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{})
+			p.Status.Phase, p.Status.StartTime = corev1.PodPending, nil
+			return p
+		}(), now: t0.Add(time.Minute + 59*time.Second)},
+		{name: "pending past its deadline", pod: func() corev1.Pod {
+			p := checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{})
+			p.Status.Phase, p.Status.StartTime = corev1.PodPending, nil
+			return p
+		}(), now: t0.Add(2 * time.Minute), wantDone: true, wantAt: t0.Add(2 * time.Minute)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, done := resultOf(&tc.pod, time.Minute, tc.now)
+			if done != tc.wantDone {
+				t.Fatalf("done = %v, want %v", done, tc.wantDone)
+			}
+			if !done {
+				return
+			}
+			if d := cmp.Diff(tc.wantExit, r.exit); d != "" {
+				t.Errorf("exit (-want +got):\n%s", d)
+			}
+			if !r.at.Equal(tc.wantAt) {
+				t.Errorf("at = %v, want %v", r.at, tc.wantAt)
+			}
+			if r.script != v1alpha1.ScriptPrecondition {
+				t.Errorf("script = %s", r.script)
+			}
+		})
+	}
+}
+
+func TestLoadPodTemplate(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{name: "valid", body: "serviceAccountName: incident-check\ncontainers:\n  - name: check\n    image: img:1\n"},
+		{name: "no service account", body: "containers:\n  - name: check\n    image: img:1\n", wantErr: true},
+		{name: "two containers", body: "serviceAccountName: a\ncontainers:\n  - name: a\n  - name: b\n", wantErr: true},
+		{name: "a reserved volume", body: "serviceAccountName: a\ncontainers:\n  - name: a\nvolumes:\n  - name: script\n", wantErr: true},
+		{name: "an unknown field", body: "serviceAccountName: a\ncontainers:\n  - name: a\nimage: x\n", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadPodTemplate(write(tc.name, tc.body))
+			if (err != nil) != tc.wantErr {
+				t.Errorf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPollIntervalHook(t *testing.T) {
+	ranAgo := func(d time.Duration) *v1alpha1.Incident {
+		return newIncident(v1alpha1.StateOpen, withChecks(v1alpha1.Check{
+			Script: v1alpha1.ScriptPrecondition, Exit: exit(1), At: metav1.NewTime(time.Now().Add(-d)),
+		}))
+	}
+	justRan := ranAgo(40 * time.Second)
+	if got := pollIntervalHook(newIncident(v1alpha1.StateAnalyzing), time.Minute); got != time.Minute {
+		t.Errorf("no script: %v, want the poll interval", got)
+	}
+	if got := pollIntervalHook(ranAgo(time.Hour), time.Minute); got != time.Minute {
+		t.Errorf("a check due: %v, want the poll interval", got)
+	}
+	if got := pollIntervalHook(justRan, time.Minute); got < 15*time.Second || got > 21*time.Second {
+		t.Errorf("next check in ~20s: %v", got)
+	}
+}
+
+// TestPodPassesRestrictedPodSecurity checks the pod the controller builds from the smallest
+// template against the restricted Pod Security Standard the checks namespace enforces.
+func TestPodPassesRestrictedPodSecurity(t *testing.T) {
+	evaluator, err := policy.NewEvaluator(policy.DefaultChecks(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := pods.Pod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition)
+	lv := psaapi.LevelVersion{Level: psaapi.LevelRestricted, Version: psaapi.LatestVersion()}
+	if r := policy.AggregateCheckResults(evaluator.EvaluatePod(lv, &p.ObjectMeta, &p.Spec)); !r.Allowed {
+		t.Errorf("the check pod violates restricted: %s", r.ForbiddenDetail())
+	}
+}

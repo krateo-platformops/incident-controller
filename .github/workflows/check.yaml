@@ -19,5 +19,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Build, vet, test, and check the generated files are current
+      - uses: azure/setup-helm@v5.0.0
+        with:
+          version: v3.19.0
+      - name: Build, vet, test, lint the charts and check the generated files are current
         run: make check
