@@ -1,0 +1,368 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: incidents.observability.krateo.io
+spec:
+  group: observability.krateo.io
+  names:
+    categories:
+    - krateo
+    - observability
+    kind: Incident
+    listKind: IncidentList
+    plural: incidents
+    shortNames:
+    - inc
+    singular: incident
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.alertRef.name
+      name: Alert
+      type: string
+    - jsonPath: .status.state
+      name: State
+      type: string
+    - jsonPath: .status.firings
+      name: Firings
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          An Incident is one occurrence of an alert's problem, from its root-cause analysis to its end. An
+          Alert opens at most one Incident at a time; firings while it is open count on it. Its own checks
+          resolve it, or a human closes it; the Alert returning to OK does neither.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: IncidentSpec is what opened the incident and what humans
+              decided about it.
+            properties:
+              alertRef:
+                description: AlertRef is the Alert that opened the incident. It is
+                  immutable.
+                properties:
+                  name:
+                    description: |-
+                      Name of the Alert. It is also the value of the observability.krateo.io/alert label, so it is
+                      at most 63 characters.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                  namespace:
+                    description: Namespace of the Alert. Writers create the Incident
+                      in this namespace.
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+                x-kubernetes-validations:
+                - message: alertRef is immutable
+                  rule: self == oldSelf
+              applied:
+                description: |-
+                  Applied says a human ran the apply script: in a terminal followed by "I applied it", or with
+                  the portal's Apply. The controller consumes it: it moves an Open incident to Verifying,
+                  appends an apply check and sets applied back to false.
+                type: boolean
+              closed:
+                description: Closed says a human closed the incident. It moves any
+                  state to Closed and cannot be unset.
+                type: boolean
+              prompt:
+                description: Prompt is the root-cause-analysis prompt sent to incident-agent.
+                type: string
+              trigger:
+                description: Trigger is what started the investigation.
+                enum:
+                - alert
+                - composition-condition
+                - user-ask
+                type: string
+              triggeredAt:
+                description: TriggeredAt is when the firing that opened the incident
+                  arrived.
+                format: date-time
+                type: string
+            required:
+            - alertRef
+            type: object
+            x-kubernetes-validations:
+            - message: closed cannot be unset
+              rule: '!has(oldSelf.closed) || !oldSelf.closed || (has(self.closed)
+                && self.closed)'
+          status:
+            description: IncidentStatus is the incident's lifecycle, its checks and
+              its root-cause analysis.
+            properties:
+              analyzedResources:
+                description: AnalyzedResources are the cluster objects the analysis
+                  read.
+                items:
+                  description: AnalyzedResource is a cluster object the analysis read.
+                  properties:
+                    gvr:
+                      description: GVR is the object's group/version/resource, e.g.
+                        apps/v1/deployments.
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    whatWasRead:
+                      description: 'WhatWasRead is what of the object the analysis
+                        inspected: status, events, spec, ...'
+                      type: string
+                  type: object
+                type: array
+              assumptions:
+                description: Assumptions are what the analysis assumed for lack of
+                  context.
+                items:
+                  type: string
+                type: array
+              checks:
+                description: Checks is the history of script runs, oldest first. Writers
+                  keep the newest 20.
+                items:
+                  description: Check is one run of a how-to-fix script.
+                  properties:
+                    at:
+                      description: At is when the run finished.
+                      format: date-time
+                      type: string
+                    exit:
+                      description: |-
+                        Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
+                        that never ran) and on the apply check that records a consumed spec.applied.
+                      format: int32
+                      maximum: 255
+                      minimum: 0
+                      type: integer
+                    script:
+                      description: Script is the script that ran.
+                      enum:
+                      - precondition
+                      - apply
+                      - verify
+                      type: string
+                  required:
+                  - at
+                  - script
+                  type: object
+                maxItems: 20
+                type: array
+              completedAt:
+                description: CompletedAt is when the root-cause analysis finished.
+                format: date-time
+                type: string
+              conditions:
+                description: Conditions of the resource.
+                items:
+                  description: A Condition that may apply to a resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        LastTransitionTime is the last time this condition transitioned from one
+                        status to another.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        A Message containing details about this condition's last transition from
+                        one status to another, if any.
+                      type: string
+                    reason:
+                      description: A Reason for this condition's last transition from
+                        one status to another.
+                      type: string
+                    status:
+                      description: Status of this condition; is it currently True,
+                        False, or Unknown?
+                      type: string
+                    type:
+                      description: |-
+                        Type of this condition. At most one of each condition type may apply to
+                        a resource at any point in time.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              error:
+                description: Error is why the root-cause analysis failed.
+                type: string
+              firings:
+                description: Firings counts the alert firings this incident covers,
+                  the one that opened it included.
+                format: int32
+                minimum: 0
+                type: integer
+              howToFix:
+                description: HowToFix is the fix the root-cause analysis wrote.
+                properties:
+                  apply:
+                    description: Apply is the fix. A human reviews and runs it.
+                    type: string
+                  precondition:
+                    description: |-
+                      Precondition tests whether the incident still holds. It tests the root-cause object, never
+                      the alert's rows.
+                    type: string
+                  verify:
+                    description: Verify tests whether the fix worked.
+                    type: string
+                type: object
+              lastFiredAt:
+                description: LastFiredAt is when the alert last fired for this incident.
+                format: date-time
+                type: string
+              missingContext:
+                description: MissingContext is what the analysis could not see but
+                  needed.
+                items:
+                  type: string
+                type: array
+              reasoningTrace:
+                description: ReasoningTrace is the ordered reasoning, each step citing
+                  its sources.
+                items:
+                  description: ReasoningStep is one step of the reasoning trace.
+                  properties:
+                    evidenceRefs:
+                      description: EvidenceRefs are the 0-based indices into status.sources
+                        that back this step.
+                      items:
+                        format: int32
+                        type: integer
+                      type: array
+                    statement:
+                      description: Statement is what this step concludes.
+                      type: string
+                    step:
+                      description: Step is the 1-based position of this step.
+                      format: int32
+                      type: integer
+                  type: object
+                type: array
+              report:
+                description: Report is the root-cause analysis in markdown.
+                type: string
+              resolution:
+                description: Resolution records how the incident ended. It is set
+                  exactly when state is Resolved or Closed.
+                properties:
+                  at:
+                    description: At is when it ended.
+                    format: date-time
+                    type: string
+                  by:
+                    description: 'By is what ended it: verify (state Resolved) or
+                      user (state Closed).'
+                    enum:
+                    - verify
+                    - user
+                    type: string
+                required:
+                - at
+                - by
+                type: object
+              rootCause:
+                description: RootCause is the analysis' conclusion.
+                properties:
+                  category:
+                    description: 'Category is the failure class: config, capacity,
+                      image, network, dependency, other.'
+                    type: string
+                  confidence:
+                    description: Confidence is a decimal string in [0, 1], e.g. "0.85".
+                    type: string
+                  statement:
+                    description: Statement is the root cause.
+                    type: string
+                type: object
+              sources:
+                description: Sources is the evidence the analysis rests on. reasoningTrace
+                  steps cite it by 0-based index.
+                items:
+                  description: Source is one piece of evidence the analysis rests
+                    on.
+                  properties:
+                    excerpt:
+                      description: Excerpt is the relevant part of the evidence, verbatim.
+                      type: string
+                    ref:
+                      description: 'Ref is where the evidence came from: a query,
+                        an object reference, a metric name.'
+                      type: string
+                    type:
+                      description: Type is the kind of evidence.
+                      enum:
+                      - logs
+                      - events
+                      - metrics
+                      - object
+                      type: string
+                  type: object
+                type: array
+              state:
+                description: State is the lifecycle state. Writers set Analyzing in
+                  the first status write.
+                enum:
+                - Analyzing
+                - Open
+                - Verifying
+                - Resolved
+                - Closed
+                type: string
+            type: object
+            x-kubernetes-validations:
+            - message: resolution is set exactly when state is Resolved or Closed
+              rule: has(self.resolution) == (has(self.state) && self.state in ['Resolved',
+                'Closed'])
+            - message: Resolved goes with resolution.by verify, Closed with resolution.by
+                user
+              rule: '!has(self.resolution) || (has(self.state) && ((self.resolution.by
+                == ''verify'') == (self.state == ''Resolved'')))'
+            - message: Resolved can only become Closed, and Closed is final
+              rule: '!has(oldSelf.state) || !(oldSelf.state in [''Resolved'', ''Closed''])
+                || (has(self.state) && (self.state == oldSelf.state || self.state
+                == ''Closed''))'
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
