@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "type": "object",
+  "title": "Incident Controller CRDs",
+  "description": "Dedicated CRD chart for incident-controller (Incident, group observability.krateo.io). Golden rule: CRDs in a separate chart with a separate lifecycle. No tunable values.",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object",
+      "title": "Global values"
+    }
+  }
+}

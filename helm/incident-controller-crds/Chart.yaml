@@ -1,0 +1,22 @@
+apiVersion: v2
+name: incident-controller-crds
+description: Krateo PlatformOps incident-controller CRDs (Incident)
+type: application
+
+# Dedicated CRD chart: the CRD lifecycle stays decoupled from the controller's version bumps
+# (core-provider#89). The CRD in templates/ is generated from apis/ by `make generate`.
+#
+# Versioned with the same release tag as the incident-controller chart: the release pipeline
+# substitutes the CHART_VERSION placeholder with the git tag.
+version: CHART_VERSION
+
+home: https://krateo.io
+icon: https://raw.githubusercontent.com/krateo-platformops/.github/main/brand/logo.svg
+keywords:
+  - krateo
+  - platformops
+  - observability
+  - incidents
+  - crd
+sources:
+  - https://github.com/krateo-platformops/incident-controller
