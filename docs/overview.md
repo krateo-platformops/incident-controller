@@ -11,27 +11,31 @@ timestamp: 2026-09-25T00:00:00Z
 
 An **Incident** is one occurrence of an Alert's problem, from its root-cause
 analysis to its end. An Alert (`alerts.observability.krateo.io`, owned by
-alert-troubleshooter) opens Incidents; it never closes them. Each Incident
-carries its own checks, three bash scripts, and ends when a script proves the
-problem gone or a human closes it.
+alert-provider) opens Incidents; it never closes them. Each Incident carries
+its own checks as bash scripts, and ends when a script proves the problem gone
+or a human closes it.
 
 ## Who writes what
 
 | Actor | Writes |
 |---|---|
-| alert-troubleshooter (the writer) | creates the Incident with its label and `spec`; writes the analysis, `howToFix`, `firings` and `lastFiredAt`; sets `Analyzing`, then `Open` |
+| alert-provider (the writer) | creates the Incident with its label and `spec`; writes the analysis, `howToFix`, `firings` and `lastFiredAt`; sets `Analyzing`, then `Open` |
 | incident-controller | runs precondition and verify; writes `checks`, every other state transition, `resolution` and the conditions |
 | a human, through the portal | `spec.applied` ("I applied it", or Apply) and `spec.closed` (Close) |
 
 Field by field: [api](./api.md).
 
-## One open incident per alert
+## Many incidents per alert
 
-A firing on an alert with an open incident (any state but `Resolved` and
-`Closed`) adds one to that incident's `status.firings` and sets
-`status.lastFiredAt`; it runs no analysis. A firing opens a new incident only
-when the alert has no open one. So a resolved incident whose alert still fires
-is followed by a new incident with a fresh analysis at the next firing.
+The writer evaluates each firing alert about every 60 s. A firing counts on
+the open incident (any state but `Resolved` and `Closed`) that describes the
+same problem: it adds one to that incident's `status.firings`, sets
+`status.lastFiredAt` and runs no analysis. An LLM compares the firing with each
+open incident to decide. When none is the same problem, the firing opens a new
+incident with its own analysis, so an alert can have several open incidents at
+once. An incident still `Analyzing`, or whose analysis failed, takes the firing
+without a comparison. [The writer's docs](https://github.com/krateo-platformops/alert-troubleshooter/blob/main/docs/overview.md)
+have the details.
 
 ## Lifecycle
 
@@ -62,13 +66,14 @@ close it. An incident with no `howToFix` scripts gets no checks run.
 
 ## The scripts
 
-`status.howToFix` holds three bash scripts written by the analysis:
+`status.howToFix` holds bash scripts written by the analysis:
 
 | Script | Run by | When |
 |---|---|---|
 | `precondition` | the controller, in a read-only sandbox | every poll interval while `Open` |
 | `apply` | a human: their own terminal, or the portal's Apply | when they decide |
 | `verify` | the controller, in a read-only sandbox | while `Verifying` |
+| `rollback` | a human, to undo apply | when an applied fix must be reverted; it moves no state |
 
 Exit `0` means the incident is gone, `1` that it holds; any other exit, or a
 timeout, is unknown and changes no state. The precondition tests the

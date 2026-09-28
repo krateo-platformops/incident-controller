@@ -54,11 +54,12 @@ Lifecycle and checks:
 | Field | Type | Written by | Meaning |
 |---|---|---|---|
 | `state` | `Analyzing` \| `Open` \| `Verifying` \| `Resolved` \| `Closed` | writer: `Analyzing`, then `Open`; controller: every other transition | see [overview](./overview.md#lifecycle) |
-| `firings` | int ≥ 0 | writer | alert firings this incident covers, the opening one included |
+| `firings` | int ≥ 0 | writer | alert firings this incident covers, the opening one included; one per evaluation, about every 60 s, while the alert fires |
 | `lastFiredAt` | date-time | writer | the last of those firings |
 | `howToFix.precondition` | string (bash) | writer | exit `1` while the incident holds, `0` once it is gone; tests the root-cause object, never the alert's rows |
 | `howToFix.apply` | string (bash) | writer | the fix; a human runs it |
 | `howToFix.verify` | string (bash) | writer | exit `0` once the fix worked, `1` if it did not |
+| `howToFix.rollback` | string (bash) | writer | undoes apply; a human runs it to revert an applied fix. Never run by the controller, moves no state |
 | `checks[]` | at most 20 | controller | script runs, oldest first; the controller keeps the newest 20 |
 | `checks[].script` | `precondition` \| `apply` \| `verify`, required | controller | the script that ran |
 | `checks[].exit` | int 0-255 | controller | its exit code; absent for a timeout, for a pod that never ran, and for the `apply` check that records a consumed `spec.applied` |

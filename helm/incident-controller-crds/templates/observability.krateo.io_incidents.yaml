@@ -37,8 +37,9 @@ spec:
       openAPIV3Schema:
         description: |-
           An Incident is one occurrence of an alert's problem, from its root-cause analysis to its end. An
-          Alert opens at most one Incident at a time; firings while it is open count on it. Its own checks
-          resolve it, or a human closes it; the Alert returning to OK does neither.
+          Alert has any number of Incidents: while it fires, a firing counts on an open Incident that
+          describes the same problem, and opens a new one when none does. Its own checks resolve it, or a
+          human closes it; the Alert returning to OK does neither.
         properties:
           apiVersion:
             description: |-
@@ -224,8 +225,9 @@ spec:
                 description: Error is why the root-cause analysis failed.
                 type: string
               firings:
-                description: Firings counts the alert firings this incident covers,
-                  the one that opened it included.
+                description: |-
+                  Firings counts the alert's firings this incident covers, the one that opened it included. The
+                  writer counts one per evaluation, about every 60 s, while the alert fires.
                 format: int32
                 minimum: 0
                 type: integer
@@ -239,6 +241,11 @@ spec:
                     description: |-
                       Precondition tests whether the incident still holds. It tests the root-cause object, never
                       the alert's rows.
+                    type: string
+                  rollback:
+                    description: |-
+                      Rollback undoes apply: it restores what apply changed. A human runs it to revert an applied
+                      fix. The controller never runs it, and running it moves no state.
                     type: string
                   verify:
                     description: Verify tests whether the fix worked.

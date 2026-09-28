@@ -54,6 +54,11 @@ status:
       kubectl wait compositiondefinition fireworksapp -n fireworksapp-system \
         --for=condition=Ready --timeout=45s >/dev/null || exit 1
       exit 0
+    rollback: |
+      #!/usr/bin/env bash
+      # restore chart 1.1.9, the version before apply
+      kubectl patch compositiondefinition fireworksapp -n fireworksapp-system \
+        --type merge -p '{"spec":{"chart":{"version":"1.1.9"}}}'
   checks:
     - script: precondition
       exit: 1

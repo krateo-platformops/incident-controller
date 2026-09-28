@@ -7,11 +7,12 @@ that runs each incident's checks and moves it through its lifecycle.
 
 ## What is this
 
-An Incident is one occurrence of an Alert's problem. alert-troubleshooter opens
-it and writes the root-cause analysis with three bash scripts (precondition,
-apply, verify); this controller runs precondition and verify in a read-only
+An Incident is one occurrence of an Alert's problem. alert-provider opens it
+and writes the root-cause analysis with bash scripts (precondition, apply,
+verify, rollback); this controller runs precondition and verify in a read-only
 sandbox and moves the incident from `Open` through `Verifying` to `Resolved`;
-a human runs apply and can close the incident at any time.
+a human runs apply (and rollback to undo it) and can close the incident at any
+time.
 
 This repo holds the API (Go types, the generated CRD and its chart). The
 controller is not implemented yet.
