@@ -43,7 +43,7 @@ const (
 	TriggerUserAsk              Trigger = "user-ask"
 )
 
-// Script names one of the three how-to-fix scripts.
+// Script names a how-to-fix script that a check records. Rollback is never checked.
 // +kubebuilder:validation:Enum=precondition;apply;verify
 type Script string
 
@@ -133,10 +133,10 @@ type IncidentSpec struct {
 	Closed bool `json:"closed,omitempty"`
 }
 
-// HowToFix is the fix as three bash scripts, written by the root-cause analysis. The controller runs
-// precondition and verify in a read-only sandbox; a human runs apply. For precondition and verify,
-// exit 0 means the incident is gone and exit 1 that it holds; any other exit, or a timeout, is
-// unknown and changes nothing.
+// HowToFix is the fix as bash scripts, written by the root-cause analysis. The controller runs
+// precondition and verify in a read-only sandbox; a human runs apply, and rollback to undo it. For
+// precondition and verify, exit 0 means the incident is gone and exit 1 that it holds; any other
+// exit, or a timeout, is unknown and changes nothing.
 type HowToFix struct {
 	// Precondition tests whether the incident still holds. It tests the root-cause object, never
 	// the alert's rows.
@@ -150,6 +150,11 @@ type HowToFix struct {
 	// Verify tests whether the fix worked.
 	// +optional
 	Verify string `json:"verify,omitempty"`
+
+	// Rollback undoes apply: it restores what apply changed. A human runs it to revert an applied
+	// fix. The controller never runs it, and running it moves no state.
+	// +optional
+	Rollback string `json:"rollback,omitempty"`
 }
 
 // Check is one run of a how-to-fix script.
@@ -250,7 +255,8 @@ type IncidentStatus struct {
 	// +optional
 	State State `json:"state,omitempty"`
 
-	// Firings counts the alert firings this incident covers, the one that opened it included.
+	// Firings counts the alert's firings this incident covers, the one that opened it included. The
+	// writer counts one per evaluation, about every 60 s, while the alert fires.
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Firings int32 `json:"firings,omitempty"`
@@ -312,8 +318,9 @@ type IncidentStatus struct {
 // +kubebuilder:object:root=true
 
 // An Incident is one occurrence of an alert's problem, from its root-cause analysis to its end. An
-// Alert opens at most one Incident at a time; firings while it is open count on it. Its own checks
-// resolve it, or a human closes it; the Alert returning to OK does neither.
+// Alert has any number of Incidents: while it fires, a firing counts on an open Incident that
+// describes the same problem, and opens a new one when none does. Its own checks resolve it, or a
+// human closes it; the Alert returning to OK does neither.
 // +kubebuilder:printcolumn:name="Alert",type="string",JSONPath=".spec.alertRef.name"
 // +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.state"
 // +kubebuilder:printcolumn:name="Firings",type="integer",JSONPath=".status.firings"

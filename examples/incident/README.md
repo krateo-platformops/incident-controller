@@ -14,8 +14,8 @@ timestamp: 2026-09-25T00:00:00Z
 
 1. The alert fired at 14:00 and opened the incident; six more firings counted
    on it (`status.firings: 7`).
-2. The root-cause analysis wrote the report, the evidence and the three
-   `howToFix` scripts, and the incident became `Open`.
+2. The root-cause analysis wrote the report, the evidence and the `howToFix`
+   scripts, rollback included, and the incident became `Open`.
 3. The precondition exited `1` twice (`Reproduced=True`): the incident held.
 4. A human ran the apply script in a terminal and clicked "I applied it"
    (`spec.applied: true`). The controller consumed it: it moved the incident
