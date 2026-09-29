@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	prv1 "github.com/krateo-platformops/provider-runtime/apis/common/v1"
 	"github.com/krateo-platformops/provider-runtime/pkg/resource"
@@ -155,6 +156,39 @@ type HowToFix struct {
 	// fix. The controller never runs it, and running it moves no state.
 	// +optional
 	Rollback string `json:"rollback,omitempty"`
+
+	// ApplyAction is apply as one Kubernetes API write, when it is one. The portal's Apply sends it
+	// as the clicking user, then sets spec.applied. The controller never sends it.
+	// +optional
+	ApplyAction *ApplyAction `json:"applyAction,omitempty"`
+}
+
+// ApplyAction is one Kubernetes API write: the object at apiVersion, resource, namespace and name,
+// and what to send it.
+type ApplyAction struct {
+	// Verb is patch (payload is a JSON merge patch), create (payload is the object) or delete.
+	// +kubebuilder:validation:Enum=patch;create;delete
+	Verb string `json:"verb"`
+
+	// APIVersion is the target's v1 or <group>/<version>.
+	APIVersion string `json:"apiVersion"`
+
+	// Resource is the target's lowercase plural resource name.
+	Resource string `json:"resource"`
+
+	// Namespace is the target's namespace; empty for a cluster-scoped object.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// Name is the target's name; for create, the new object's.
+	Name string `json:"name"`
+
+	// Payload is the body: the merge patch, or the object to create. A delete has none.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +optional
+	Payload *runtime.RawExtension `json:"payload,omitempty"`
 }
 
 // Check is one run of a how-to-fix script.
