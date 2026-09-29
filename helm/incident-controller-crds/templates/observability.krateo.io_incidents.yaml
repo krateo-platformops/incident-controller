@@ -237,6 +237,45 @@ spec:
                   apply:
                     description: Apply is the fix. A human reviews and runs it.
                     type: string
+                  applyAction:
+                    description: |-
+                      ApplyAction is apply as one Kubernetes API write, when it is one. The portal's Apply sends it
+                      as the clicking user, then sets spec.applied. The controller never sends it.
+                    properties:
+                      apiVersion:
+                        description: APIVersion is the target's v1 or <group>/<version>.
+                        type: string
+                      name:
+                        description: Name is the target's name; for create, the new
+                          object's.
+                        type: string
+                      namespace:
+                        description: Namespace is the target's namespace; empty for
+                          a cluster-scoped object.
+                        type: string
+                      payload:
+                        description: 'Payload is the body: the merge patch, or the
+                          object to create. A delete has none.'
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      resource:
+                        description: Resource is the target's lowercase plural resource
+                          name.
+                        type: string
+                      verb:
+                        description: Verb is patch (payload is a JSON merge patch),
+                          create (payload is the object) or delete.
+                        enum:
+                        - patch
+                        - create
+                        - delete
+                        type: string
+                    required:
+                    - apiVersion
+                    - name
+                    - resource
+                    - verb
+                    type: object
                   precondition:
                     description: |-
                       Precondition tests whether the incident still holds. It tests the root-cause object, never
