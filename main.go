@@ -46,8 +46,7 @@ func main() {
 	checkPodTemplate := flag.String("check-pod-template", env.String(envKey("CHECK_POD_TEMPLATE"), "/etc/incident-controller/check-pod.yaml"), "File holding the check pod spec template.")
 	maxReconcileRate := flag.Int("max-reconcile-rate", env.Int(envKey("MAX_RECONCILE_RATE"), 5), "The number of concurrent reconciles.")
 	leaderElection := flag.Bool("leader-election", env.Bool(envKey("LEADER_ELECTION"), false), "Use leader election for the controller manager.")
-	maxErrorRetryInterval := flag.Duration("max-error-retry-interval", env.Duration(envKey("MAX_ERROR_RETRY_INTERVAL"), 30*time.Second), "The maximum interval between retries when an error occurs.")
-	minErrorRetryInterval := flag.Duration("min-error-retry-interval", env.Duration(envKey("MIN_ERROR_RETRY_INTERVAL"), time.Second), "The minimum interval between retries when an error occurs.")
+	globalReconcileRate := flag.Int("global-reconcile-rate", env.Int(envKey("GLOBAL_RECONCILE_RATE"), 20), "Reconciles per second across all incidents, in bursts of up to ten times that.")
 	timeout := flag.Duration("timeout", env.Duration(envKey("TIMEOUT"), time.Minute), "The timeout for each reconcile.")
 	flag.Parse()
 
@@ -70,7 +69,10 @@ func main() {
 					Logger:                  log,
 					MaxConcurrentReconciles: *maxReconcileRate,
 					PollInterval:            *pollInterval,
-					GlobalRateLimiter:       ratelimiter.NewGlobalExponential(*minErrorRetryInterval, *maxErrorRetryInterval),
+					// A token bucket: provider-runtime consults it on every reconcile, not only after an
+					// error, so a failure back-off here would delay every check. Errors back off per
+					// incident in the controller-runtime queue.
+					GlobalRateLimiter: ratelimiter.NewGlobal(*globalReconcileRate),
 				},
 				Timeout: *timeout,
 			},

@@ -26,7 +26,7 @@ sets its default. The chart sets them from its values.
 | `-max-reconcile-rate` | `MAX_RECONCILE_RATE` | `5` | concurrent reconciles |
 | `-leader-election` | `LEADER_ELECTION` | `false` | leader election, Lease `incident-controller.observability.krateo.io` |
 | `-timeout` | `TIMEOUT` | `1m` | timeout of one reconcile |
-| `-min-error-retry-interval`, `-max-error-retry-interval` | `MIN_ERROR_RETRY_INTERVAL`, `MAX_ERROR_RETRY_INTERVAL` | `1s`, `30s` | backoff after an error |
+| `-global-reconcile-rate` | `GLOBAL_RECONCILE_RATE` | `20` | reconciles per second across all incidents (a token bucket, bursts of 10×); a failed reconcile backs off per incident, 1 s to 60 s |
 
 A pod that has not finished `check-timeout` + 1 minute after its creation, for
 example one never scheduled, counts as a timeout.
