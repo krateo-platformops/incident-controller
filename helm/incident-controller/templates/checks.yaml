@@ -1,0 +1,124 @@
+{{- $name := include "incident-controller.name" . }}
+{{- if .Values.checks.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.checks.namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+{{- end }}
+# The identity of the check pods: read-only, no Secrets.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.checks.serviceAccount }}
+  namespace: {{ .Values.checks.namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+{{- range .Values.checks.clusterRoles }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-check-{{ . }}
+  labels:
+    {{- include "incident-controller.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.checks.serviceAccount }}
+    namespace: {{ $.Values.checks.namespace }}
+{{- end }}
+{{- with .Values.checks.readApiGroups }}
+---
+# Read access to the Krateo custom resources view does not cover. The groups are listed one by
+# one: a wildcard group would include Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-check-reader
+  labels:
+    {{- include "incident-controller.labels" $ | nindent 4 }}
+rules:
+  - apiGroups:
+      {{- range . }}
+      - {{ . | quote }}
+      {{- end }}
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-check-reader
+  labels:
+    {{- include "incident-controller.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-check-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.checks.serviceAccount }}
+    namespace: {{ $.Values.checks.namespace }}
+{{- end }}
+{{- if .Values.checks.networkPolicy.enabled }}
+{{- $np := .Values.checks.networkPolicy }}
+{{- $apiServer := $np.apiServer }}
+{{- if not $apiServer }}
+{{- with (lookup "v1" "Service" "default" "kubernetes") }}
+{{- $ports := list }}
+{{- range .spec.ports }}{{ $ports = append $ports .port }}{{ end }}
+{{- range .spec.clusterIPs }}
+{{- $apiServer = append $apiServer (dict "cidr" (printf "%s/%s" . (ternary "128" "32" (contains ":" .))) "ports" $ports) }}
+{{- end }}
+{{- end }}
+{{- with (lookup "discovery.k8s.io/v1" "EndpointSlice" "default" "kubernetes") }}
+{{- $ports := list }}
+{{- range .ports }}{{ $ports = append $ports .port }}{{ end }}
+{{- range .endpoints }}
+{{- range .addresses }}
+{{- $apiServer = append $apiServer (dict "cidr" (printf "%s/%s" . (ternary "128" "32" (contains ":" .))) "ports" $ports) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+---
+# Check pods reach the apiserver, by IP, and nothing else; they accept no traffic. No DNS: the
+# controller points their resolver at nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}-checks
+  namespace: {{ .Values.checks.namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: incident-check
+  policyTypes:
+    - Ingress
+    - Egress
+  {{- if not $apiServer }}
+  egress: []
+  {{- else }}
+  egress:
+    {{- range $apiServer }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr }}
+      ports:
+        {{- range .ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}

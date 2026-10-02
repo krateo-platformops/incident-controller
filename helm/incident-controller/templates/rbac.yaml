@@ -1,0 +1,92 @@
+# The controller's own rights: Incidents cluster-wide, and pods and ConfigMaps in the checks
+# namespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "incident-controller.name" . }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+rules:
+  # Finalizer, create-handshake annotations, and consuming spec.applied.
+  - apiGroups: ["observability.krateo.io"]
+    resources: ["incidents"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["observability.krateo.io"]
+    resources: ["incidents/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "incident-controller.name" . }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "incident-controller.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "incident-controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "incident-controller.name" . }}-checks
+  namespace: {{ .Values.checks.namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "incident-controller.name" . }}-checks
+  namespace: {{ .Values.checks.namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "incident-controller.name" . }}-checks
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "incident-controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.controller.leaderElection }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "incident-controller.name" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "incident-controller.name" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "incident-controller.name" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "incident-controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

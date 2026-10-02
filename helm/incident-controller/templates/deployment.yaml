@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incident-controller.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "incident-controller.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "incident-controller.selectorLabels" . | nindent 8 }}
+      annotations:
+        # The controller reads the template at start: a change rolls the pod.
+        checksum/check-pod: {{ include "incident-controller.checkPod" . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "incident-controller.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: controller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: INCIDENT_CONTROLLER_DEBUG
+              value: {{ .Values.controller.debug | quote }}
+            - name: INCIDENT_CONTROLLER_POLL_INTERVAL
+              value: {{ .Values.controller.pollInterval | quote }}
+            - name: INCIDENT_CONTROLLER_SETTLE_WINDOW
+              value: {{ .Values.controller.settleWindow | quote }}
+            - name: INCIDENT_CONTROLLER_SYNC_PERIOD
+              value: {{ .Values.controller.syncPeriod | quote }}
+            - name: INCIDENT_CONTROLLER_MAX_RECONCILE_RATE
+              value: {{ .Values.controller.maxReconcileRate | quote }}
+            - name: INCIDENT_CONTROLLER_LEADER_ELECTION
+              value: {{ .Values.controller.leaderElection | quote }}
+            - name: INCIDENT_CONTROLLER_CHECKS_NAMESPACE
+              value: {{ .Values.checks.namespace | quote }}
+            - name: INCIDENT_CONTROLLER_CHECK_TIMEOUT
+              value: {{ printf "%ds" (int .Values.checks.timeoutSeconds) | quote }}
+            - name: INCIDENT_CONTROLLER_CHECK_POD_TEMPLATE
+              value: /etc/incident-controller/check-pod.yaml
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          volumeMounts:
+            - name: check-pod
+              mountPath: /etc/incident-controller
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: check-pod
+          configMap:
+            name: {{ include "incident-controller.name" . }}-check-pod

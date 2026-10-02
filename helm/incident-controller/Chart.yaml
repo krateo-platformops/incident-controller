@@ -1,0 +1,15 @@
+apiVersion: v2
+name: incident-controller
+description: Krateo incident controller. It runs each Incident's precondition and verify scripts in a read-only sandbox and moves the incident through its lifecycle. The Incident CRD ships in incident-controller-crds.
+type: application
+version: CHART_VERSION
+appVersion: "CHART_VERSION"
+home: https://krateo.io
+icon: https://raw.githubusercontent.com/krateo-platformops/.github/main/brand/logo.svg
+keywords:
+  - krateo
+  - platformops
+  - observability
+  - incidents
+sources:
+  - https://github.com/krateo-platformops/incident-controller

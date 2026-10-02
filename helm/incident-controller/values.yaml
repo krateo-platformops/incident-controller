@@ -1,0 +1,98 @@
+# The controller image. tag defaults to the chart appVersion (the release tag).
+image:
+  repository: ghcr.io/krateo-platformops/incident-controller
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: incident-controller
+
+controller:
+  debug: false
+  # Time from the end of one check of an incident to the start of the next.
+  pollInterval: 1m
+  # How long, from entering Verifying, a verify exit 1 is retried before the incident goes back
+  # to Open.
+  settleWindow: 5m
+  syncPeriod: 1h
+  maxReconcileRate: 5
+  leaderElection: true
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# The check pods: they run the precondition and verify scripts.
+checks:
+  # A namespace holding only the check pods and their service account, so the controller's right
+  # to create pods reaches no other service account.
+  namespace: krateo-incident-checks
+  createNamespace: true
+  # Deadline of one check run (the pod's activeDeadlineSeconds).
+  timeoutSeconds: 60
+  serviceAccount: incident-check
+  # Cluster roles the check service account is bound to. view reads the built-in APIs but no
+  # Secrets and no custom resources.
+  clusterRoles:
+    - view
+  # Krateo API groups the check service account reads (get, list, watch on every resource), through
+  # the incident-controller-check-reader ClusterRole. The Krateo groups a platform serves.
+  readApiGroups:
+    - audit.krateo.io
+    - basic.authn.krateo.io
+    - composition.krateo.io
+    - core.krateo.io
+    - git.krateo.io
+    - ldap.authn.krateo.io
+    - oauth.authn.krateo.io
+    - observability.krateo.io
+    - oidc.authn.krateo.io
+    - review.krateo.io
+    - serviceaccount.authn.krateo.io
+    - templates.krateo.io
+    - widgets.templates.krateo.io
+  # bash, kubectl and jq. tag defaults to the chart appVersion.
+  image:
+    repository: ghcr.io/krateo-platformops/incident-controller-check
+    tag: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  podSecurityContext:
+    runAsUser: 65532
+    runAsGroup: 65532
+  nodeSelector: {}
+  tolerations: []
+  networkPolicy:
+    enabled: true
+    # The only egress: the apiserver, [{cidr: 10.0.0.1/32, ports: [443]}]. Empty means the
+    # kubernetes Service and its EndpointSlice are looked up at install; a render without cluster
+    # access (helm template) then allows no egress at all, so checks cannot reach the apiserver.
+    apiServer: []

@@ -1,0 +1,11 @@
+# The check pod template the controller loads at start.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "incident-controller.name" . }}-check-pod
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+data:
+  check-pod.yaml: |
+    {{- include "incident-controller.checkPod" . | nindent 4 }}
