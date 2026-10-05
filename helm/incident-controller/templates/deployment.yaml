@@ -48,6 +48,12 @@ spec:
               value: {{ .Values.checks.namespace | quote }}
             - name: INCIDENT_CONTROLLER_CHECK_TIMEOUT
               value: {{ printf "%ds" (int .Values.checks.timeoutSeconds) | quote }}
+            - name: INCIDENT_CONTROLLER_APPLY_TIMEOUT
+              value: {{ printf "%ds" (int .Values.apply.timeoutSeconds) | quote }}
+            - name: INCIDENT_CONTROLLER_APPLY_TTL
+              value: {{ .Values.apply.ttl | quote }}
+            - name: INCIDENT_CONTROLLER_CREDENTIALS_NAMESPACE
+              value: {{ include "incident-controller.credentialsNamespace" . | quote }}
             - name: INCIDENT_CONTROLLER_CHECK_POD_TEMPLATE
               value: /etc/incident-controller/check-pod.yaml
           ports:

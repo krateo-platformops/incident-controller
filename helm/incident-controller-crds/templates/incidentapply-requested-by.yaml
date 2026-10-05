@@ -1,0 +1,40 @@
+# Writes the apiserver's authenticated user into spec.requestedBy of every new IncidentApply,
+# over anything the client sent. The controller runs the apply script as this user. The CRD
+# makes the spec immutable afterwards. MutatingAdmissionPolicy is GA from Kubernetes 1.36; the
+# controller rejects every IncidentApply while this policy or its binding is missing.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: incidentapply-requested-by
+spec:
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["observability.krateo.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE"]
+        resources: ["incidentapplies"]
+  mutations:
+    # A JSON patch replaces requestedBy whole: an apply configuration would merge a client's
+    # extra groups into the list.
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          [
+            JSONPatch{
+              op: "add",
+              path: "/spec/requestedBy",
+              value: Object.spec.requestedBy{
+                username: request.userInfo.username,
+                groups: request.userInfo.groups
+              }
+            }
+          ]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: incidentapply-requested-by
+spec:
+  policyName: incidentapply-requested-by

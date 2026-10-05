@@ -44,6 +44,15 @@
     "resources": { "type": "object" },
     "podSecurityContext": { "type": "object" },
     "securityContext": { "type": "object" },
+    "apply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "ttl": { "type": "string", "pattern": "^[0-9]+(ns|us|ms|s|m|h)$" },
+        "credentialsNamespace": { "type": "string" }
+      }
+    },
     "checks": {
       "type": "object",
       "additionalProperties": false,

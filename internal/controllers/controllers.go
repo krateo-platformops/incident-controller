@@ -8,6 +8,9 @@ import (
 )
 
 // Setup adds every controller to the manager.
-func Setup(mgr ctrl.Manager, o incident.Options) error {
-	return incident.Setup(mgr, o)
+func Setup(mgr ctrl.Manager, o incident.Options, a incident.ApplyOptions) error {
+	if err := incident.Setup(mgr, o); err != nil {
+		return err
+	}
+	return incident.SetupApply(mgr, a)
 }

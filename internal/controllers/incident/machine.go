@@ -108,12 +108,13 @@ func checkDue(inc *v1alpha1.Incident, cfg Config, now time.Time) bool {
 }
 
 // settleWindowStart is when the incident entered Verifying: the time of the newest check that is
-// not a verify run, the precondition exit 0 or the apply check that moved it. When the history
-// holds only verify runs, their oldest is used, which ends the window no later than the real one.
+// neither a verify run nor a failed apply, the precondition exit 0 or the apply check that moved
+// it. When the history holds no such check, the oldest is used, which ends the window no later
+// than the real one.
 func settleWindowStart(inc *v1alpha1.Incident) time.Time {
 	checks := inc.Status.Checks
 	for i := len(checks) - 1; i >= 0; i-- {
-		if checks[i].Script != v1alpha1.ScriptVerify {
+		if checks[i].Script != v1alpha1.ScriptVerify && !failedApply(checks[i]) {
 			return checks[i].At.Time
 		}
 	}
@@ -121,6 +122,11 @@ func settleWindowStart(inc *v1alpha1.Incident) time.Time {
 		return checks[0].At.Time
 	}
 	return time.Time{}
+}
+
+// failedApply reports whether c is an apply run that exited non-zero.
+func failedApply(c v1alpha1.Check) bool {
+	return c.Script == v1alpha1.ScriptApply && c.Exit != nil && *c.Exit != 0
 }
 
 // recorded reports whether r is already in the check history. Results carry deterministic
@@ -220,6 +226,25 @@ func record(inc *v1alpha1.Incident, cfg Config, r result, now time.Time) []chang
 		}
 	}
 	return nil
+}
+
+// recordApply records a finished IncidentApply run on its incident: an apply check with the run's
+// exit code. Exit 0 moves an Open incident to Verifying, as spec.applied does; any other result
+// moves nothing. Only Open and Verifying incidents record a run; the others are left alone.
+// changed reports whether inc changed.
+func recordApply(inc *v1alpha1.Incident, r result, by string) (changes []change, changed bool) {
+	state := inc.Status.State
+	if state != v1alpha1.StateOpen && state != v1alpha1.StateVerifying {
+		return nil, false
+	}
+	if recorded(inc, r) {
+		return nil, false
+	}
+	appendCheck(inc, v1alpha1.Check{Script: v1alpha1.ScriptApply, Exit: r.exit, At: metav1.NewTime(r.at)})
+	if state == v1alpha1.StateOpen && r.exit != nil && *r.exit == 0 {
+		return []change{setState(inc, v1alpha1.StateVerifying, "apply exited 0, run by "+by)}, true
+	}
+	return nil, true
 }
 
 func reproducedCondition(s metav1.ConditionStatus, reason prv1.ConditionReason, msg string, now time.Time) prv1.Condition {

@@ -27,6 +27,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{/*
 Service account name
 */}}
+{{- define "incident-controller.credentialsNamespace" -}}
+{{- default .Release.Namespace .Values.apply.credentialsNamespace }}
+{{- end }}
+
 {{- define "incident-controller.serviceAccountName" -}}
 {{- default "incident-controller" .Values.serviceAccount.name }}
 {{- end }}

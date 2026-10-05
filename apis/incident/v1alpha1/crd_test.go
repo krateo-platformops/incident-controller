@@ -44,8 +44,13 @@ func readYAML(t *testing.T, path string, out any) {
 
 func openAPISchema(t *testing.T) *apiextensions.JSONSchemaProps {
 	t.Helper()
+	return openAPISchemaOf(t, crdPath)
+}
+
+func openAPISchemaOf(t *testing.T, path string) *apiextensions.JSONSchemaProps {
+	t.Helper()
 	var crd apiextensionsv1.CustomResourceDefinition
-	readYAML(t, crdPath, &crd)
+	readYAML(t, path, &crd)
 	var s apiextensions.JSONSchemaProps
 	if err := apiextensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(
 		crd.Spec.Versions[0].Schema.OpenAPIV3Schema, &s, nil); err != nil {
@@ -63,7 +68,12 @@ type validator struct {
 
 func newValidator(t *testing.T) *validator {
 	t.Helper()
-	s := openAPISchema(t)
+	return newValidatorOf(t, crdPath)
+}
+
+func newValidatorOf(t *testing.T, path string) *validator {
+	t.Helper()
+	s := openAPISchemaOf(t, path)
 	sv, _, err := validation.NewSchemaValidator(s)
 	if err != nil {
 		t.Fatal(err)

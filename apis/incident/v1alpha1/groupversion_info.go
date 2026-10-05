@@ -1,4 +1,4 @@
-// Package v1alpha1 contains the Incident API of the observability.krateo.io group.
+// Package v1alpha1 contains the Incident and IncidentApply APIs of the observability.krateo.io group.
 // +kubebuilder:object:generate=true
 // +groupName=observability.krateo.io
 // +versionName=v1alpha1
@@ -32,6 +32,13 @@ var (
 	IncidentGroupVersionKind = SchemeGroupVersion.WithKind(IncidentKind)
 )
 
+var (
+	IncidentApplyKind             = reflect.TypeOf(IncidentApply{}).Name()
+	IncidentApplyGroupKind        = schema.GroupKind{Group: Group, Kind: IncidentApplyKind}.String()
+	IncidentApplyKindAPIVersion   = IncidentApplyKind + "." + SchemeGroupVersion.String()
+	IncidentApplyGroupVersionKind = SchemeGroupVersion.WithKind(IncidentApplyKind)
+)
+
 func init() {
-	SchemeBuilder.Register(&Incident{}, &IncidentList{})
+	SchemeBuilder.Register(&Incident{}, &IncidentList{}, &IncidentApply{}, &IncidentApplyList{})
 }

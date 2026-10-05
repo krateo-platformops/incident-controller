@@ -1,0 +1,186 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: incidentapplies.observability.krateo.io
+spec:
+  group: observability.krateo.io
+  names:
+    categories:
+    - krateo
+    - observability
+    kind: IncidentApply
+    listKind: IncidentApplyList
+    plural: incidentapplies
+    shortNames:
+    - incapply
+    singular: incidentapply
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.incidentRef.name
+      name: Incident
+      type: string
+    - jsonPath: .spec.requestedBy.username
+      name: User
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.exitCode
+      name: Exit
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          An IncidentApply is one request to run an Incident's apply script as the user who creates it.
+          The controller runs the script in a check pod with that user's own credentials, records the
+          result here and on the Incident, and deletes the IncidentApply a TTL after it finishes.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: IncidentApplySpec names the incident whose apply script runs,
+              and who asked.
+            properties:
+              incidentRef:
+                description: IncidentRef is the Incident whose apply script runs,
+                  in this object's namespace.
+                properties:
+                  name:
+                    description: Name of the Incident.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              requestedBy:
+                description: |-
+                  RequestedBy is the user who created this object. The incidentapply-requested-by admission
+                  policy writes it from the apiserver's authenticated user, over anything the client sent.
+                  The script runs with this user's credentials.
+                properties:
+                  groups:
+                    description: Groups are the authenticated user's groups.
+                    items:
+                      type: string
+                    type: array
+                  username:
+                    description: Username is the authenticated user's name.
+                    minLength: 1
+                    type: string
+                required:
+                - username
+                type: object
+            required:
+            - incidentRef
+            - requestedBy
+            type: object
+            x-kubernetes-validations:
+            - message: spec is immutable
+              rule: self == oldSelf
+          status:
+            description: IncidentApplyStatus is the outcome of the run.
+            properties:
+              conditions:
+                description: Conditions of the resource.
+                items:
+                  description: A Condition that may apply to a resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        LastTransitionTime is the last time this condition transitioned from one
+                        status to another.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        A Message containing details about this condition's last transition from
+                        one status to another, if any.
+                      type: string
+                    reason:
+                      description: A Reason for this condition's last transition from
+                        one status to another.
+                      type: string
+                    status:
+                      description: Status of this condition; is it currently True,
+                        False, or Unknown?
+                      type: string
+                    type:
+                      description: |-
+                        Type of this condition. At most one of each condition type may apply to
+                        a resource at any point in time.
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              exitCode:
+                description: ExitCode is the script's exit code. It is absent when
+                  the run produced none.
+                format: int32
+                maximum: 255
+                minimum: 0
+                type: integer
+              finishedAt:
+                description: |-
+                  FinishedAt is when the run ended, or when the request was rejected. The controller deletes
+                  the IncidentApply its TTL after this.
+                format: date-time
+                type: string
+              message:
+                description: Message is why the run was rejected, or how it ended.
+                type: string
+              output:
+                description: Output is the end of the run's stdout and stderr, at
+                  most 4096 bytes.
+                type: string
+              phase:
+                description: Phase is where the run is. It is absent until the controller
+                  acts.
+                enum:
+                - Running
+                - Succeeded
+                - Failed
+                - Rejected
+                type: string
+              script:
+                description: Script is the apply script as it ran.
+                type: string
+              startedAt:
+                description: StartedAt is when the apply pod was created.
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

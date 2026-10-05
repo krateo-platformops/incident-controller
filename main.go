@@ -1,5 +1,5 @@
 // Command incident-controller runs the checks of every Incident and moves it through its
-// lifecycle.
+// lifecycle, and runs each IncidentApply's apply script as the user who created it.
 package main
 
 import (
@@ -43,6 +43,9 @@ func main() {
 	settleWindow := flag.Duration("settle-window", env.Duration(envKey("SETTLE_WINDOW"), 5*time.Minute), "How long, from entering Verifying, a verify exit 1 is retried before the incident goes back to Open.")
 	checkTimeout := flag.Duration("check-timeout", env.Duration(envKey("CHECK_TIMEOUT"), time.Minute), "Deadline of one check run: the check pod's activeDeadlineSeconds.")
 	checksNamespace := flag.String("checks-namespace", env.String(envKey("CHECKS_NAMESPACE"), ""), "Namespace the check pods run in.")
+	applyTimeout := flag.Duration("apply-timeout", env.Duration(envKey("APPLY_TIMEOUT"), 2*time.Minute), "Deadline of one IncidentApply run: the apply pod's activeDeadlineSeconds.")
+	applyTTL := flag.Duration("apply-ttl", env.Duration(envKey("APPLY_TTL"), 30*24*time.Hour), "How long a finished IncidentApply is kept before it is deleted.")
+	credentialsNamespace := flag.String("credentials-namespace", env.String(envKey("CREDENTIALS_NAMESPACE"), ""), "Namespace of the <username>-clientconfig Secrets authn writes at login.")
 	checkPodTemplate := flag.String("check-pod-template", env.String(envKey("CHECK_POD_TEMPLATE"), "/etc/incident-controller/check-pod.yaml"), "File holding the check pod spec template.")
 	maxReconcileRate := flag.Int("max-reconcile-rate", env.Int(envKey("MAX_RECONCILE_RATE"), 5), "The number of concurrent reconciles.")
 	leaderElection := flag.Bool("leader-election", env.Bool(envKey("LEADER_ELECTION"), false), "Use leader election for the controller manager.")
@@ -58,25 +61,34 @@ func main() {
 	log := logging.NewSlogLogger(*slog.New(handler))
 	ctrl.SetLogger(logr.FromSlogHandler(handler))
 
+	controllerOptions := option.ControllerOptions{
+		Options: controller.Options{
+			Logger:                  log,
+			MaxConcurrentReconciles: *maxReconcileRate,
+			PollInterval:            *pollInterval,
+			// A token bucket: provider-runtime consults it on every reconcile, not only after an
+			// error, so a failure back-off here would delay every check. Errors back off per
+			// incident in the controller-runtime queue.
+			GlobalRateLimiter: ratelimiter.NewGlobal(*globalReconcileRate),
+		},
+		Timeout: *timeout,
+	}
 	if err := run(log, runOptions{
 		syncPeriod:      *syncPeriod,
 		leaderElection:  *leaderElection,
 		checksNamespace: *checksNamespace,
 		podTemplate:     *checkPodTemplate,
 		incident: incident.Options{
-			Controller: option.ControllerOptions{
-				Options: controller.Options{
-					Logger:                  log,
-					MaxConcurrentReconciles: *maxReconcileRate,
-					PollInterval:            *pollInterval,
-					// A token bucket: provider-runtime consults it on every reconcile, not only after an
-					// error, so a failure back-off here would delay every check. Errors back off per
-					// incident in the controller-runtime queue.
-					GlobalRateLimiter: ratelimiter.NewGlobal(*globalReconcileRate),
-				},
-				Timeout: *timeout,
+			Controller: controllerOptions,
+			Checks:     incident.Config{SettleWindow: *settleWindow, CheckTimeout: *checkTimeout},
+		},
+		apply: incident.ApplyOptions{
+			Controller: controllerOptions,
+			Applies: incident.ApplyConfig{
+				Timeout:              *applyTimeout,
+				TTL:                  *applyTTL,
+				CredentialsNamespace: *credentialsNamespace,
 			},
-			Checks: incident.Config{SettleWindow: *settleWindow, CheckTimeout: *checkTimeout},
 		},
 	}); err != nil {
 		log.Error(err, "incident-controller stopped")
@@ -90,11 +102,15 @@ type runOptions struct {
 	checksNamespace string
 	podTemplate     string
 	incident        incident.Options
+	apply           incident.ApplyOptions
 }
 
 func run(log logging.Logger, o runOptions) error {
 	if o.checksNamespace == "" {
 		return fmt.Errorf("the checks namespace is required (--checks-namespace or %s)", envKey("CHECKS_NAMESPACE"))
+	}
+	if o.apply.Applies.CredentialsNamespace == "" {
+		return fmt.Errorf("the credentials namespace is required (--credentials-namespace or %s)", envKey("CREDENTIALS_NAMESPACE"))
 	}
 	template, err := incident.LoadPodTemplate(o.podTemplate)
 	if err != nil {
@@ -105,12 +121,16 @@ func run(log logging.Logger, o runOptions) error {
 		Template:  template,
 		Timeout:   o.incident.Checks.CheckTimeout,
 	}
+	o.apply.Pods = o.incident.Pods
 
 	log.Info("Starting incident-controller",
 		"poll-interval", o.incident.Controller.PollInterval.String(),
 		"settle-window", o.incident.Checks.SettleWindow.String(),
 		"check-timeout", o.incident.Checks.CheckTimeout.String(),
 		"checks-namespace", o.checksNamespace,
+		"apply-timeout", o.apply.Applies.Timeout.String(),
+		"apply-ttl", o.apply.Applies.TTL.String(),
+		"credentials-namespace", o.apply.Applies.CredentialsNamespace,
 		"leader-election", o.leaderElection)
 
 	cfg, err := ctrl.GetConfig()
@@ -118,7 +138,8 @@ func run(log logging.Logger, o runOptions) error {
 		return fmt.Errorf("cannot get API server rest config: %w", err)
 	}
 
-	// Check pods and their ConfigMaps are cached only in the checks namespace.
+	// Check and apply pods and their ConfigMaps are cached only in the checks namespace. Secrets
+	// are never cached: the credentials are read past the cache, one at a time.
 	checkObjects := cache.ByObject{
 		Namespaces: map[string]cache.Config{o.checksNamespace: {}},
 		Label:      labels.SelectorFromSet(labels.Set{incident.LabelComponent: incident.ComponentCheck}),
@@ -148,7 +169,7 @@ func run(log logging.Logger, o runOptions) error {
 	if err := apis.AddToScheme(mgr.GetScheme()); err != nil {
 		return fmt.Errorf("cannot add APIs to scheme: %w", err)
 	}
-	if err := controllers.Setup(mgr, o.incident); err != nil {
+	if err := controllers.Setup(mgr, o.incident, o.apply); err != nil {
 		return fmt.Errorf("cannot set up controllers: %w", err)
 	}
 	return mgr.Start(ctrl.SetupSignalHandler())
