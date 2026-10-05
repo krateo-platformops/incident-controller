@@ -246,6 +246,9 @@ func (c *applyConnector) Connect(_ context.Context, mg resource.Managed) (reconc
 
 // applyPlan is what Observe found for Create and Update to act on.
 type applyPlan struct {
+	// base is the IncidentApply as read, before Observe changed it: the status is written as a
+	// merge patch from it.
+	base *v1alpha1.IncidentApply
 	// start is the admitted run, for Create.
 	start *applyStart
 	// dirty means the status changed beyond conditions.
@@ -295,9 +298,9 @@ func (e *applyExternal) Observe(ctx context.Context, mg resource.Managed) (recon
 	if meta.WasDeleted(ia) {
 		return reconciler.ExternalObservation{ResourceExists: pod != nil}, nil
 	}
+	e.plan = applyPlan{base: ia.DeepCopy()}
 	ia.SetConditions(prv1.Available())
 	now := e.now()
-	e.plan = applyPlan{}
 
 	if ia.Status.Phase == "" {
 		switch {
@@ -403,7 +406,9 @@ func (e *applyExternal) Update(ctx context.Context, mg resource.Managed) error {
 		}
 	}
 	if e.plan.dirty {
-		if err := e.kube.Status().Update(ctx, ia); err != nil {
+		// A patch, not an update: the reconcile that created the pod has just written the
+		// object's annotations, and only this controller writes its status.
+		if err := e.kube.Status().Patch(ctx, ia, client.MergeFrom(e.plan.base)); err != nil {
 			return fmt.Errorf("cannot persist incidentapply status: %w", err)
 		}
 		if e.plan.finished {
