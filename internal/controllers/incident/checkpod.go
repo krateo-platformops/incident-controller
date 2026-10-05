@@ -28,17 +28,26 @@ const (
 
 	annotationIncidentNamespace = "observability.krateo.io/incident-namespace"
 	annotationIncidentName      = "observability.krateo.io/incident-name"
+
+	// Apply pods carry no incident UID label and no incident annotations: the Incident controller
+	// never sees them as its own check pods.
+	labelApplyUID            = "observability.krateo.io/incidentapply-uid"
+	annotationApplyNamespace = "observability.krateo.io/incidentapply-namespace"
+	annotationApplyName      = "observability.krateo.io/incidentapply-name"
 )
 
 const (
 	// noNameserver is the check pods' only nameserver; nothing listens there.
 	noNameserver = "127.0.0.1"
 
-	containerName = "check"
-	scriptVolume  = "script"
-	tmpVolume     = "tmp"
-	scriptDir     = "/check"
-	scriptKey     = "check.sh"
+	containerName    = "check"
+	scriptVolume     = "script"
+	tmpVolume        = "tmp"
+	kubeconfigVolume = "kubeconfig"
+	scriptDir        = "/check"
+	scriptKey        = "check.sh"
+	kubeconfigDir    = "/kube"
+	kubeconfigKey    = "config"
 )
 
 // CheckPods builds the pods that run precondition and verify.
@@ -69,7 +78,7 @@ func LoadPodTemplate(path string) (corev1.PodSpec, error) {
 		return spec, fmt.Errorf("check pod template %s: serviceAccountName is required", path)
 	}
 	for _, v := range spec.Volumes {
-		if v.Name == scriptVolume || v.Name == tmpVolume {
+		if v.Name == scriptVolume || v.Name == tmpVolume || v.Name == kubeconfigVolume {
 			return spec, fmt.Errorf("check pod template %s: volume name %q is reserved", path, v.Name)
 		}
 	}
@@ -112,19 +121,25 @@ func (p CheckPods) meta(inc *v1alpha1.Incident, name string, s v1alpha1.Script) 
 	}
 }
 
-// Pod is the check pod for one run of a script. The template supplies identity, image and
-// scheduling; the sandbox settings are enforced here whatever the template says.
+// Pod is the check pod for one run of a script.
 func (p CheckPods) Pod(inc *v1alpha1.Incident, s v1alpha1.Script) *corev1.Pod {
-	name := checkName(inc, s)
+	pod := p.sandbox(p.meta(inc, checkName(inc, s), s), p.Timeout)
+	pod.Spec.AutomountServiceAccountToken = ptr.To(true)
+	return pod
+}
+
+// sandbox is a pod that runs the script in the ConfigMap named after it. The template supplies
+// identity, image and scheduling; the sandbox settings are enforced here whatever the template
+// says.
+func (p CheckPods) sandbox(m metav1.ObjectMeta, timeout time.Duration) *corev1.Pod {
 	spec := *p.Template.DeepCopy()
 
 	spec.RestartPolicy = corev1.RestartPolicyNever
-	spec.ActiveDeadlineSeconds = ptr.To(int64(p.Timeout / time.Second))
-	spec.AutomountServiceAccountToken = ptr.To(true)
+	spec.ActiveDeadlineSeconds = ptr.To(int64(timeout / time.Second))
 	spec.EnableServiceLinks = ptr.To(false)
 	spec.HostNetwork, spec.HostPID, spec.HostIPC = false, false, false
 	// No name resolution: a lookup reaching cluster DNS is forwarded outside and carries data out.
-	// kubectl reaches the apiserver by the IP in KUBERNETES_SERVICE_HOST.
+	// kubectl reaches the apiserver by IP.
 	spec.DNSPolicy = corev1.DNSNone
 	spec.DNSConfig = &corev1.PodDNSConfig{Nameservers: []string{noNameserver}}
 	if spec.SecurityContext == nil {
@@ -136,7 +151,7 @@ func (p CheckPods) Pod(inc *v1alpha1.Incident, s v1alpha1.Script) *corev1.Pod {
 	}
 	spec.Volumes = append(spec.Volumes,
 		corev1.Volume{Name: scriptVolume, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: name},
+			LocalObjectReference: corev1.LocalObjectReference{Name: m.Name},
 			DefaultMode:          ptr.To(int32(0o444)),
 		}}},
 		corev1.Volume{Name: tmpVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
@@ -163,20 +178,78 @@ func (p CheckPods) Pod(inc *v1alpha1.Incident, s v1alpha1.Script) *corev1.Pod {
 	c.SecurityContext.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
 	c.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
 
-	return &corev1.Pod{ObjectMeta: p.meta(inc, name, s), Spec: spec}
+	return &corev1.Pod{ObjectMeta: m, Spec: spec}
 }
 
 // ConfigMap holds the script a check pod runs. It is owned by the pod, so it goes with it.
 func (p CheckPods) ConfigMap(inc *v1alpha1.Incident, pod *corev1.Pod, s v1alpha1.Script) *corev1.ConfigMap {
 	m := p.meta(inc, pod.Name, s)
-	m.OwnerReferences = []metav1.OwnerReference{{
+	m.OwnerReferences = ownedBy(pod)
+	return &corev1.ConfigMap{ObjectMeta: m, Data: map[string]string{scriptKey: scriptBody(inc, s)}}
+}
+
+// applyName names the pod, kubeconfig Secret and ConfigMap of an IncidentApply's run. One run per
+// IncidentApply, so the name depends only on its UID.
+func applyName(ia *v1alpha1.IncidentApply) string {
+	return "apply-" + strings.ReplaceAll(string(ia.UID), "-", "")
+}
+
+func (p CheckPods) applyMeta(ia *v1alpha1.IncidentApply) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:      applyName(ia),
+		Namespace: p.Namespace,
+		Labels: map[string]string{
+			LabelComponent: ComponentCheck,
+			LabelManagedBy: managedBy,
+			labelApplyUID:  string(ia.UID),
+			labelScript:    string(v1alpha1.ScriptApply),
+		},
+		Annotations: map[string]string{
+			annotationApplyNamespace: ia.Namespace,
+			annotationApplyName:      ia.Name,
+		},
+	}
+}
+
+// ApplyPod is the pod that runs an IncidentApply's script. It is a check pod with no service
+// account token: kubectl authenticates with the requester's kubeconfig, mounted from the Secret
+// named after the pod.
+func (p CheckPods) ApplyPod(ia *v1alpha1.IncidentApply, timeout time.Duration) *corev1.Pod {
+	pod := p.sandbox(p.applyMeta(ia), timeout)
+	pod.Spec.AutomountServiceAccountToken = ptr.To(false)
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{Name: kubeconfigVolume, VolumeSource: corev1.VolumeSource{
+		Secret: &corev1.SecretVolumeSource{SecretName: pod.Name, DefaultMode: ptr.To(int32(0o444))},
+	}})
+	c := &pod.Spec.Containers[0]
+	c.Env = append(c.Env, corev1.EnvVar{Name: "KUBECONFIG", Value: kubeconfigDir + "/" + kubeconfigKey})
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: kubeconfigVolume, MountPath: kubeconfigDir, ReadOnly: true})
+	return pod
+}
+
+// ApplySecret holds the requester's kubeconfig for an apply pod. It is owned by the pod, so the
+// credential goes with it.
+func (p CheckPods) ApplySecret(ia *v1alpha1.IncidentApply, pod *corev1.Pod, kubeconfig []byte) *corev1.Secret {
+	m := p.applyMeta(ia)
+	m.OwnerReferences = ownedBy(pod)
+	return &corev1.Secret{ObjectMeta: m, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{kubeconfigKey: kubeconfig}}
+}
+
+// ApplyConfigMap holds the script an apply pod runs. It is owned by the pod.
+func (p CheckPods) ApplyConfigMap(ia *v1alpha1.IncidentApply, pod *corev1.Pod, script string) *corev1.ConfigMap {
+	m := p.applyMeta(ia)
+	m.OwnerReferences = ownedBy(pod)
+	return &corev1.ConfigMap{ObjectMeta: m, Data: map[string]string{scriptKey: script}}
+}
+
+// ownedBy makes the pod the controller owner, so the object is deleted with it.
+func ownedBy(pod *corev1.Pod) []metav1.OwnerReference {
+	return []metav1.OwnerReference{{
 		APIVersion: "v1",
 		Kind:       "Pod",
 		Name:       pod.Name,
 		UID:        pod.UID,
 		Controller: ptr.To(true),
 	}}
-	return &corev1.ConfigMap{ObjectMeta: m, Data: map[string]string{scriptKey: scriptBody(inc, s)}}
 }
 
 // resultOf reads a check pod. done is false while the pod may still produce a result. A pod

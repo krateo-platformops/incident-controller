@@ -43,7 +43,19 @@ securityContext:
     drop:
       - ALL
 
-# The check pods: they run the precondition and verify scripts.
+# Run apply: each IncidentApply runs its incident's apply script in a check pod, with the client
+# certificate authn issued the user who created it, never the controller's or a service account's.
+apply:
+  # Deadline of one run (the apply pod's activeDeadlineSeconds).
+  timeoutSeconds: 120
+  # How long a finished IncidentApply is kept before the controller deletes it.
+  ttl: 720h
+  # Namespace of the <username>-clientconfig Secrets authn writes at login. Empty means the release
+  # namespace. The controller reads Secrets there.
+  credentialsNamespace: ""
+
+# The check pods: they run the precondition and verify scripts, and the apply script of an
+# IncidentApply.
 checks:
   # A namespace holding only the check pods and their service account, so the controller's right
   # to create pods reaches no other service account.

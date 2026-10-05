@@ -12,7 +12,8 @@ and writes the root-cause analysis with bash scripts (precondition, apply,
 verify, rollback); this controller runs precondition and verify in a read-only
 sandbox and moves the incident from `Open` through `Verifying` to `Resolved`;
 a human runs apply (and rollback to undo it) and can close the incident at any
-time.
+time. A human can also ask the controller to run apply for them with an
+`IncidentApply`: the script then runs with that user's own Kubernetes rights.
 
 This repo holds the API (Go types, the generated CRD and its chart), the
 controller, its chart, and the check pod image.
@@ -21,7 +22,8 @@ controller, its chart, and the check pod image.
 
 Two charts, versioned from the git tag at release and published to
 `oci://ghcr.io/krateo-platformops/charts`: `incident-controller-crds` (the
-CRD) and `incident-controller` (the controller). Install the CRD chart first:
+CRDs and the admission policy that stamps who created an IncidentApply, which
+needs Kubernetes 1.36) and `incident-controller` (the controller). Install the CRD chart first:
 
 ```sh
 helm install incident-controller-crds oci://ghcr.io/krateo-platformops/charts/incident-controller-crds --version <tag>
@@ -37,6 +39,8 @@ check pods' RBAC and network policy: [configuration](docs/configuration.md).
 
 - [`examples/incident`](examples/incident/README.md): an Incident its verify
   script resolved.
+- [`examples/incidentapply`](examples/incidentapply/README.md): one Run apply
+  click, run as the user who made it.
 
 ## Docs
 

@@ -21,7 +21,7 @@ or a human closes it.
 |---|---|
 | alert-provider (the writer) | creates the Incident with its label and `spec`; writes the analysis, `howToFix`, `firings` and `lastFiredAt`; sets `Analyzing`, then `Open` |
 | incident-controller | runs precondition and verify; writes `checks`, every other state transition, `resolution` and the conditions |
-| a human, through the portal | `spec.applied` ("I applied it", or Apply) and `spec.closed` (Close), with their own token and the `krateo-incident-responder` role |
+| a human, through the portal | `spec.applied` ("I applied it", or Apply) and `spec.closed` (Close), with their own token and the `krateo-incident-responder` role; an IncidentApply (Run apply), which has the controller run the apply script with their own rights |
 
 Field by field: [api](./api.md).
 
@@ -48,7 +48,7 @@ any state ──spec.closed──▶ Closed
 |---|---|---|
 | — | `Analyzing` | the writer's first status write |
 | `Analyzing` | `Open` | the analysis finished, or failed with `error` set |
-| `Open` | `Verifying` | precondition exit `0`, or `spec.applied`, which the controller consumes: it appends an `apply` check and sets `applied` back to `false` |
+| `Open` | `Verifying` | precondition exit `0`; `spec.applied`, which the controller consumes: it appends an `apply` check and sets `applied` back to `false`; or an IncidentApply run that exits `0` |
 | `Verifying` | `Resolved` | verify exit `0`, at any time |
 | `Verifying` | `Open` | verify exit `1` once the settle window has passed |
 | any | `Closed` | `spec.closed: true` |
@@ -60,7 +60,7 @@ recorded and verify runs again at the next poll; the first exit `1` at or
 after the window's end moves the incident back to `Open`. An exit other than
 `0` or `1`, or a timeout, never moves it, inside the window or after. A human
 applying again while `Verifying` appends another `apply` check, which restarts
-the window.
+the window; a failed IncidentApply run is recorded but does not.
 
 `Resolved` means a script proved the problem gone; `Closed` means a person
 decided. `Closed` is final, and a `Resolved` incident can only become `Closed`.
@@ -81,7 +81,7 @@ close it. An incident with no `howToFix` scripts gets no checks run.
 | Script | Run by | When |
 |---|---|---|
 | `precondition` | the controller, in a read-only sandbox | every poll interval while `Open` |
-| `apply` | a human: their own terminal, or the portal's Apply | when they decide |
+| `apply` | a human: their own terminal, or the portal's Apply; or the controller, as the user who asks with Run apply | when they decide |
 | `verify` | the controller, in a read-only sandbox | while `Verifying` |
 | `rollback` | a human, to undo apply | when an applied fix must be reverted; it moves no state |
 
@@ -113,6 +113,35 @@ deterministic, so a result whose pod outlives a failed delete is not recorded
 twice. A running check of a script that is no longer current (the incident was
 applied or closed meanwhile) is deleted and its result dropped.
 
+## Run apply
+
+An **IncidentApply** asks the controller to run one Incident's apply script as
+the user who creates it. The portal's Run apply creates one, as the clicking
+user, through snowplow.
+
+1. **Who asked.** The `incidentapply-requested-by` MutatingAdmissionPolicy, in
+   the CRD chart, writes the user the apiserver authenticated for the create
+   (`request.userInfo`) into `spec.requestedBy`, over anything the client sent.
+   The CRD keeps `spec` immutable after that.
+2. **Admission.** The controller runs the script only when the policy and its
+   binding existed before the request, the incident is `Open` with an apply
+   script, no other request for it is pending or running, the user may `patch`
+   the incident (a SubjectAccessReview), and the user's login credentials
+   exist, are theirs and outlast the run. Otherwise the request is `Rejected`
+   with the reason.
+3. **The run.** The controller reads the user's `<username>-clientconfig`
+   Secret, the client certificate authn issued them at login, and writes a
+   kubeconfig from it into a Secret owned by the apply pod. The apply pod is a
+   check pod with no service account token: kubectl reaches the apiserver by
+   IP as that user, so RBAC judges every command on the user's own rights.
+4. **The result.** The exit code and the end of the output go into the
+   request's status, and one `ApplyFinished` Event. The run is also an `apply`
+   check on the incident with its exit; exit `0` moves an `Open` incident to
+   `Verifying`, as `spec.applied` does. The apply pod, its Secret and its
+   ConfigMap are deleted once the run ends.
+5. **Retention.** The controller deletes a finished IncidentApply its TTL
+   (`apply.ttl`, 30 days by default) after `finishedAt`.
+
 ## Check pods
 
 Each run is a pod in a dedicated namespace (`krateo-incident-checks` by
@@ -127,15 +156,16 @@ default), holding only the check pods and their read-only service account:
   ingress;
 - `activeDeadlineSeconds: 60`, and the `restricted` Pod Security Standard.
 
-The controller never runs an apply script. Details: [configuration](./configuration.md).
+Apply pods differ in one way: they mount no service account token, and
+kubectl uses the requester's kubeconfig. Details: [configuration](./configuration.md).
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `apis/incident/v1alpha1` | the Go types, the source of truth |
-| `helm/incident-controller-crds` | the CRD chart; its template is generated from the Go types |
+| `helm/incident-controller-crds` | the CRD chart: the CRDs, generated from the Go types, and the `incidentapply-requested-by` admission policy |
 | `helm/incident-controller` | the controller chart: Deployment, RBAC, the checks namespace, the check pod template, the NetworkPolicy, the unbound `krateo-incident-viewer` and `krateo-incident-responder` roles |
-| `main.go`, `internal/controllers/incident` | the controller: `machine.go` is the state machine, `checkpod.go` the check pods, `incident.go` the provider-runtime client |
+| `main.go`, `internal/controllers/incident` | the controller: `machine.go` is the state machine, `checkpod.go` the check and apply pods, `incident.go` the Incident's provider-runtime client, `apply.go` the IncidentApply's |
 | `check/Dockerfile` | the check pod image |
-| `examples/incident` | a sample Incident, validated by the unit tests |
+| `examples/incident`, `examples/incidentapply` | a sample Incident and IncidentApply, validated by the unit tests |

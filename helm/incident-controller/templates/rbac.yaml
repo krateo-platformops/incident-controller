@@ -1,5 +1,6 @@
-# The controller's own rights: Incidents cluster-wide, and pods and ConfigMaps in the checks
-# namespace only.
+# The controller's own rights: Incidents and IncidentApplies cluster-wide, pods, ConfigMaps and
+# apply kubeconfig Secrets in the checks namespace only, and reading the login credentials authn
+# writes, with which it runs each apply script as the user who asked.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -14,6 +15,22 @@ rules:
   - apiGroups: ["observability.krateo.io"]
     resources: ["incidents/status"]
     verbs: ["get", "update", "patch"]
+  # Run apply: finalizer, status, and deleting a request after its TTL.
+  - apiGroups: ["observability.krateo.io"]
+    resources: ["incidentapplies"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: ["observability.krateo.io"]
+    resources: ["incidentapplies/status"]
+    verbs: ["get", "update", "patch"]
+  # Whether the requester may patch the incident: running its apply script takes that right.
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+  # Whether the policy that writes spec.requestedBy, and its binding, predate a request.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingadmissionpolicies", "mutatingadmissionpolicybindings"]
+    resourceNames: ["incidentapply-requested-by"]
+    verbs: ["get"]
   - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
@@ -44,6 +61,13 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "configmaps"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # An apply run's output, and the kubeconfig Secret it runs with (owned by its pod).
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -56,6 +80,36 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "incident-controller.name" . }}-checks
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "incident-controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# The <username>-clientconfig Secrets authn writes at login: the client certificate an apply script
+# runs with. This reads every user's credentials, as snowplow does.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "incident-controller.name" . }}-credentials
+  namespace: {{ include "incident-controller.credentialsNamespace" . }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "incident-controller.name" . }}-credentials
+  namespace: {{ include "incident-controller.credentialsNamespace" . }}
+  labels:
+    {{- include "incident-controller.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "incident-controller.name" . }}-credentials
 subjects:
   - kind: ServiceAccount
     name: {{ include "incident-controller.serviceAccountName" . }}

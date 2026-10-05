@@ -1,5 +1,6 @@
 # The image check pods run: bash, kubectl and jq, nothing else. The controller mounts the script
-# and runs it as the command; kubectl authenticates with the pod's service account token.
+# and runs it as the command; kubectl authenticates with the pod's service account token, or, in an
+# apply pod, with the requester's kubeconfig at $KUBECONFIG.
 FROM alpine:3.22
 
 ARG TARGETARCH

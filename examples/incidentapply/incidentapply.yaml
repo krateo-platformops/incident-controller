@@ -1,0 +1,29 @@
+apiVersion: observability.krateo.io/v1alpha1
+kind: IncidentApply
+metadata:
+  name: compositiondefinitions-not-ready-20260925-140000-apply-1759658400
+  namespace: krateo-system
+spec:
+  incidentRef:
+    name: compositiondefinitions-not-ready-20260925-140000
+  # Written by the incidentapply-requested-by admission policy, over anything the client sent.
+  requestedBy:
+    username: alice
+    groups:
+      - devs
+      - system:authenticated
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: Available
+      lastTransitionTime: "2026-10-05T10:00:03Z"
+  phase: Succeeded
+  message: the apply script exited 0
+  script: |
+    kubectl -n krateo-system rollout restart deployment/core-provider
+  exitCode: 0
+  output: |
+    deployment.apps/core-provider restarted
+  startedAt: "2026-10-05T10:00:03Z"
+  finishedAt: "2026-10-05T10:00:11Z"

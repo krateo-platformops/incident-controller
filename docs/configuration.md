@@ -20,6 +20,9 @@ sets its default. The chart sets them from its values.
 | `-settle-window` | `SETTLE_WINDOW` | `5m` | how long, from entering `Verifying`, a verify exit `1` is retried before the incident goes back to `Open` |
 | `-check-timeout` | `CHECK_TIMEOUT` | `1m` | deadline of one check run, the pod's `activeDeadlineSeconds` |
 | `-checks-namespace` | `CHECKS_NAMESPACE` | none, required | namespace the check pods run in |
+| `-apply-timeout` | `APPLY_TIMEOUT` | `2m` | deadline of one IncidentApply run, the apply pod's `activeDeadlineSeconds` |
+| `-apply-ttl` | `APPLY_TTL` | `720h` | how long a finished IncidentApply is kept before the controller deletes it |
+| `-credentials-namespace` | `CREDENTIALS_NAMESPACE` | none, required | namespace of the `<username>-clientconfig` Secrets authn writes at login |
 | `-check-pod-template` | `CHECK_POD_TEMPLATE` | `/etc/incident-controller/check-pod.yaml` | the check pod spec template |
 | `-debug` | `DEBUG` | `false` | debug logging |
 | `-sync` | `SYNC_PERIOD` | `1h` | informer resync period |
@@ -53,6 +56,10 @@ tolerations. The controller sets the rest, whatever the template says:
 The pod passes the `restricted` Pod Security Standard, which the checks
 namespace enforces.
 
+An apply pod is the same pod with `automountServiceAccountToken: false`, the
+requester's kubeconfig mounted read-only at `/kube` from a Secret owned by the
+pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
+
 ## Chart values (`helm/incident-controller`)
 
 | Value | Default | Meaning |
@@ -63,7 +70,10 @@ namespace enforces.
 | `controller.pollInterval`, `controller.settleWindow` | `1m`, `5m` | see the flags |
 | `controller.debug`, `syncPeriod`, `maxReconcileRate`, `leaderElection` | `false`, `1h`, `5`, `true` | see the flags |
 | `resources`, `podSecurityContext`, `securityContext` | small, non-root, read-only | the controller pod |
-| `checks.namespace` | `krateo-incident-checks` | where check pods run |
+| `apply.timeoutSeconds` | `120` | the apply deadline |
+| `apply.ttl` | `720h` | how long a finished IncidentApply is kept |
+| `apply.credentialsNamespace` | `""` (the release namespace) | where authn writes `<username>-clientconfig` |
+| `checks.namespace` | `krateo-incident-checks` | where check and apply pods run |
 | `checks.createNamespace` | `true` | create it, with `pod-security.kubernetes.io/enforce: restricted` |
 | `checks.timeoutSeconds` | `60` | the check deadline |
 | `checks.serviceAccount` | `incident-check` | the check pods' identity |
@@ -100,24 +110,36 @@ namespace enforces.
 | cluster | `incidents.observability.krateo.io` | get, list, watch, update, patch |
 | cluster | `incidents/status` | get, update, patch |
 | cluster | `events` (core and `events.k8s.io`) | create, patch |
+| cluster | `incidentapplies.observability.krateo.io` | get, list, watch, update, patch, delete |
+| cluster | `incidentapplies/status` | get, update, patch |
+| cluster | `subjectaccessreviews` | create |
+| cluster | `mutatingadmissionpolicies`, `mutatingadmissionpolicybindings` named `incidentapply-requested-by` | get |
 | checks namespace | `pods`, `configmaps` | get, list, watch, create, delete |
+| checks namespace | `pods/log` | get |
+| checks namespace | `secrets` | create |
+| credentials namespace | `secrets` | get |
 | its namespace | `leases` | get, create, update (leader election) |
 
 The controller can create pods only in the checks namespace, where the only
-service account with any rights is the read-only check one. It reads no
-Secrets and runs no apply script.
+service account with any rights is the read-only check one. It reads Secrets
+only in the credentials namespace: every user's login credentials, as snowplow
+does, which lets it act as any user who has logged in. It uses them only to run
+an apply script someone asked for as that same user, and never as itself.
 
 ## Roles for people
 
-The portal's Close, "I applied it" and Discard act on the Incident with the
+The portal's Close, "I applied it", Discard and Run apply act with the
 clicking user's own token. The chart ships two ClusterRoles for that and binds
 neither; bind them to your groups, cluster-wide or per namespace with a
 RoleBinding.
 
-| ClusterRole | Verbs on `incidents.observability.krateo.io` | Allows |
+| ClusterRole | Verbs | Allows |
 |---|---|---|
-| `krateo-incident-viewer` | get, list, watch | reading incidents |
-| `krateo-incident-responder` | get, list, watch, patch, delete | Close (`spec.closed`), "I applied it" (`spec.applied`), Discard (delete) |
+| `krateo-incident-viewer` | get, list, watch on incidents and incidentapplies | reading incidents and their runs |
+| `krateo-incident-responder` | get, list, watch, patch, delete on incidents; get, list, watch, create on incidentapplies | Close (`spec.closed`), "I applied it" (`spec.applied`), Discard (delete), Run apply (create an IncidentApply) |
+
+Run apply also needs `patch` on the incident, which the controller checks, and
+the script can do only what the user's own roles allow.
 
 Neither grants `incidents/status`: only the writer and the controller change
 an incident's status. Neither carries aggregation labels.

@@ -1,7 +1,7 @@
 ---
 type: API
 title: incident-controller — api
-description: The Incident custom resource (incidents.observability.krateo.io/v1alpha1) field by field, who writes each field, and the rules the apiserver enforces.
+description: The Incident and IncidentApply custom resources (observability.krateo.io/v1alpha1) field by field, who writes each field, and the rules the apiserver enforces.
 resource: github.com/krateo-platformops/incident-controller
 tags: [crd, incident, observability, api]
 timestamp: 2026-09-25T00:00:00Z
@@ -57,12 +57,12 @@ Lifecycle and checks:
 | `firings` | int ≥ 0 | writer | alert firings this incident covers, the opening one included; one per evaluation, about every 60 s, while the alert fires |
 | `lastFiredAt` | date-time | writer | the last of those firings |
 | `howToFix.precondition` | string (bash) | writer | exit `1` while the incident holds, `0` once it is gone; tests the root-cause object, never the alert's rows |
-| `howToFix.apply` | string (bash) | writer | the fix; a human runs it |
+| `howToFix.apply` | string (bash) | writer | the fix; a human runs it, or the controller runs it as the user who creates an [IncidentApply](#incidentapply) |
 | `howToFix.verify` | string (bash) | writer | exit `0` once the fix worked, `1` if it did not |
 | `howToFix.rollback` | string (bash) | writer | undoes apply; a human runs it to revert an applied fix. Never run by the controller, moves no state |
 | `checks[]` | at most 20 | controller | script runs, oldest first; the controller keeps the newest 20 |
 | `checks[].script` | `precondition` \| `apply` \| `verify`, required | controller | the script that ran |
-| `checks[].exit` | int 0-255 | controller | its exit code; absent for a timeout, for a pod that never ran, and for the `apply` check that records a consumed `spec.applied` |
+| `checks[].exit` | int 0-255 | controller | its exit code; absent for a timeout, for a pod that never ran, and for the `apply` check that records a consumed `spec.applied`. An `apply` check from an IncidentApply run carries the run's exit |
 | `checks[].at` | date-time, required | controller | when the run finished |
 | `resolution.by` | `verify` \| `user`, required | controller | `verify` with `Resolved`, `user` with `Closed` |
 | `resolution.at` | date-time, required | controller | when the incident ended |
@@ -113,10 +113,37 @@ A writer's status patch that breaks a rule is rejected whole. In particular, a
 writer finishing an analysis on an incident a human already closed cannot move
 it to `Open`.
 
+## IncidentApply
+
+One request to run an Incident's apply script as the user who creates it: group
+`observability.krateo.io`, version `v1alpha1`, plural `incidentapplies`, short
+name `incapply`, namespaced (the incident's namespace), with a status
+subresource. A sample: [`examples/incidentapply`](../examples/incidentapply/README.md).
+
+| Field | Type | Written by | Meaning |
+|---|---|---|---|
+| `spec.incidentRef.name` | string, required | the creator | the Incident, in this object's namespace |
+| `spec.requestedBy.username`, `.groups` | string, []string, required | the `incidentapply-requested-by` admission policy | the user the apiserver authenticated for the create, written over anything the client sent. The script runs as this user |
+| `status.phase` | `Running` \| `Succeeded` \| `Failed` \| `Rejected` | controller | absent until the controller acts. `Rejected`: the script never ran; `Failed`: it exited non-zero or did not finish in time |
+| `status.message` | string | controller | why it was rejected, or how it ended |
+| `status.script` | string (bash) | controller | the apply script as it ran |
+| `status.exitCode` | int 0-255 | controller | absent when the run produced none |
+| `status.output` | string | controller | the end of the run's stdout and stderr, at most 4096 bytes |
+| `status.startedAt`, `status.finishedAt` | time | controller | when the pod was created; when the run ended or the request was rejected |
+
+The controller emits one Event per request when it reaches a terminal phase,
+reason `ApplyFinished`, its message starting with the phase
+(`Succeeded: the apply script exited 0`). It deletes the request its TTL
+(`apply.ttl`, 30 days by default) after `finishedAt`.
+
+`spec` is immutable (`spec is immutable`). `kubectl get incidentapplies` prints
+`Incident`, `User`, `Phase`, `Exit` and `Age`.
+
 ## Go
 
 - `v1alpha1.Incident` satisfies provider-runtime's `resource.Managed`,
   `v1alpha1.IncidentList` its `resource.ManagedList`.
-- Constants: `LabelAlert`, `MaxChecks`, the `State*`, `Script*`, `ResolvedBy*`,
+- `v1alpha1.IncidentApply` satisfies `resource.Managed` too.
+- Constants: `RequesterPolicy`, `MaxApplyOutput`, `ReasonApplyFinished`, the `Apply*` phases, `LabelAlert`, `MaxChecks`, the `State*`, `Script*`, `ResolvedBy*`,
   `Trigger*` and `Source*` values, `TypeReproduced` and its reasons.
 - `apis.AddToScheme` registers the group.

@@ -211,12 +211,56 @@ func TestRecordVerify(t *testing.T) {
 			want: want{state: v1alpha1.StateVerifying, checks: []v1alpha1.Check{entered, ran(nil, 9*time.Minute)}, reproduced: metav1.ConditionTrue}},
 		{name: "the window starts at the apply check", inc: verifying(check(v1alpha1.ScriptApply, nil, 4*time.Minute)), r: run(exit(1), 6*time.Minute),
 			want: want{state: v1alpha1.StateVerifying, checks: []v1alpha1.Check{check(v1alpha1.ScriptApply, nil, 4*time.Minute), ran(exit(1), 6*time.Minute)}, reproduced: metav1.ConditionTrue}},
+		{name: "a failed apply run does not restart the window", inc: verifying(entered, check(v1alpha1.ScriptApply, exit(1), 4*time.Minute)), r: run(exit(1), 5*time.Minute),
+			want: want{state: v1alpha1.StateOpen, checks: []v1alpha1.Check{entered, check(v1alpha1.ScriptApply, exit(1), 4*time.Minute), ran(exit(1), 5*time.Minute)}, reproduced: metav1.ConditionTrue}},
+		{name: "a successful apply run restarts the window", inc: verifying(entered, check(v1alpha1.ScriptApply, exit(0), 4*time.Minute)), r: run(exit(1), 5*time.Minute),
+			want: want{state: v1alpha1.StateVerifying, checks: []v1alpha1.Check{entered, check(v1alpha1.ScriptApply, exit(0), 4*time.Minute), ran(exit(1), 5*time.Minute)}, reproduced: metav1.ConditionTrue}},
 		{name: "with only verify runs left, the window starts at the oldest", inc: verifying(ran(exit(1), time.Minute)), r: run(exit(1), 6*time.Minute),
 			want: want{state: v1alpha1.StateOpen, checks: []v1alpha1.Check{ran(exit(1), time.Minute), ran(exit(1), 6*time.Minute)}, reproduced: metav1.ConditionTrue}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			record(tc.inc, cfg, tc.r, tc.r.at)
+			diff(t, tc.want, got(tc.inc))
+		})
+	}
+}
+
+func TestRecordApply(t *testing.T) {
+	run := func(code *int32) result {
+		return result{script: v1alpha1.ScriptApply, exit: code, at: t0.Add(time.Minute)}
+	}
+	applied := func(code *int32) v1alpha1.Check { return check(v1alpha1.ScriptApply, code, time.Minute) }
+
+	cases := []struct {
+		name    string
+		inc     *v1alpha1.Incident
+		r       result
+		changed bool
+		want    want
+	}{
+		{name: "Open, exit 0: Verifying", inc: newIncident(v1alpha1.StateOpen), r: run(exit(0)), changed: true,
+			want: want{state: v1alpha1.StateVerifying, checks: []v1alpha1.Check{applied(exit(0))}}},
+		{name: "Open, exit 1: recorded, stays Open", inc: newIncident(v1alpha1.StateOpen), r: run(exit(1)), changed: true,
+			want: want{state: v1alpha1.StateOpen, checks: []v1alpha1.Check{applied(exit(1))}}},
+		{name: "Open, timed out: recorded, stays Open", inc: newIncident(v1alpha1.StateOpen), r: run(nil), changed: true,
+			want: want{state: v1alpha1.StateOpen, checks: []v1alpha1.Check{applied(nil)}}},
+		{name: "Verifying, exit 0: recorded", inc: newIncident(v1alpha1.StateVerifying), r: run(exit(0)), changed: true,
+			want: want{state: v1alpha1.StateVerifying, checks: []v1alpha1.Check{applied(exit(0))}}},
+		{name: "already recorded", inc: newIncident(v1alpha1.StateOpen, withChecks(applied(exit(1)))), r: run(exit(1)),
+			want: want{state: v1alpha1.StateOpen, checks: []v1alpha1.Check{applied(exit(1))}}},
+		{name: "Resolved: nothing", inc: newIncident(v1alpha1.StateResolved), r: run(exit(0)),
+			want: want{state: v1alpha1.StateResolved}},
+		{name: "Closed: nothing", inc: newIncident(v1alpha1.StateClosed), r: run(exit(0)),
+			want: want{state: v1alpha1.StateClosed}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, changed := recordApply(tc.inc, tc.r, "alice")
+			if changed != tc.changed {
+				t.Errorf("changed: want %v, got %v", tc.changed, changed)
+			}
+			tc.want.reproduced = metav1.ConditionUnknown
 			diff(t, tc.want, got(tc.inc))
 		})
 	}

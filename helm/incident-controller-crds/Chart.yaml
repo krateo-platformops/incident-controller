@@ -1,6 +1,6 @@
 apiVersion: v2
 name: incident-controller-crds
-description: Krateo PlatformOps incident-controller CRDs (Incident)
+description: Krateo PlatformOps incident-controller CRDs (Incident, IncidentApply) and the admission policy that stamps who requested an IncidentApply
 type: application
 
 # Dedicated CRD chart: the CRD lifecycle stays decoupled from the controller's version bumps
