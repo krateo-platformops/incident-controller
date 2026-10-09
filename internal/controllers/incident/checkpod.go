@@ -90,16 +90,16 @@ func selector(inc *v1alpha1.Incident) map[string]string {
 	return map[string]string{labelIncidentUID: string(inc.UID)}
 }
 
-// checkName names the pod and ConfigMap of the next run of a script. It depends only on the
-// incident's persisted state, so a create retried after a partial failure reuses the same name.
-func checkName(inc *v1alpha1.Incident, s v1alpha1.Script) string {
+// checkName names the pod and ConfigMap of the run of a script that became due a poll interval
+// after from (see checkFrom). A create retried after a partial failure reuses the same name.
+func checkName(inc *v1alpha1.Incident, s v1alpha1.Script, from time.Time) string {
 	uid := strings.ReplaceAll(string(inc.UID), "-", "")
 	if len(uid) > 12 {
 		uid = uid[:12]
 	}
 	var seq int64
-	if c := lastCheck(inc); c != nil {
-		seq = c.At.Unix()
+	if !from.IsZero() {
+		seq = from.Unix()
 	}
 	return fmt.Sprintf("check-%s-%s-%d", uid, s, seq)
 }
@@ -121,9 +121,9 @@ func (p CheckPods) meta(inc *v1alpha1.Incident, name string, s v1alpha1.Script) 
 	}
 }
 
-// Pod is the check pod for one run of a script.
-func (p CheckPods) Pod(inc *v1alpha1.Incident, s v1alpha1.Script) *corev1.Pod {
-	pod := p.sandbox(p.meta(inc, checkName(inc, s), s), p.Timeout)
+// Pod is the check pod for the run of a script that became due a poll interval after from.
+func (p CheckPods) Pod(inc *v1alpha1.Incident, s v1alpha1.Script, from time.Time) *corev1.Pod {
+	pod := p.sandbox(p.meta(inc, checkName(inc, s, from), s), p.Timeout)
 	pod.Spec.AutomountServiceAccountToken = ptr.To(true)
 	return pod
 }

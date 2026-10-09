@@ -32,8 +32,8 @@ List one alert's incidents with the label, in the alert's namespace:
 kubectl get incidents -n krateo-system -l observability.krateo.io/alert=compositiondefinitions-not-ready
 ```
 
-`kubectl get incidents` prints `Alert` (`.spec.alertRef.name`), `State`,
-`Firings` and `Age`.
+`kubectl get incidents` prints `Alert` (`.spec.alertRef.name`), `State` and
+`Age`.
 
 ## spec
 
@@ -44,7 +44,7 @@ kubectl get incidents -n krateo-system -l observability.krateo.io/alert=composit
 | `trigger` | `alert` \| `composition-condition` \| `user-ask` | writer | what started the investigation |
 | `prompt` | string | writer | the root-cause-analysis prompt sent to incident-agent |
 | `triggeredAt` | date-time | writer | when the opening firing arrived |
-| `applied` | bool | human: "I applied it", or the portal's Apply; reset by the controller | the apply script ran. The controller consumes it: it moves Open to Verifying, appends an `apply` check and sets `applied` back to `false` |
+| `applied` | bool | human: "I applied it", or the portal's Apply; reset by the controller | the apply script ran. The controller consumes it: it moves Open to Verifying, records an `apply` result and sets `applied` back to `false` |
 | `closed` | bool | human: the portal's Close | moves any state to Closed |
 
 ## status
@@ -54,16 +54,14 @@ Lifecycle and checks:
 | Field | Type | Written by | Meaning |
 |---|---|---|---|
 | `state` | `Analyzing` \| `Open` \| `Verifying` \| `Resolved` \| `Closed` | writer: `Analyzing`, then `Open`; controller: every other transition | see [overview](./overview.md#lifecycle) |
-| `firings` | int ≥ 0 | writer | alert firings this incident covers, the opening one included; one per evaluation, about every 60 s, while the alert fires |
-| `lastFiredAt` | date-time | writer | the last of those firings |
 | `howToFix.precondition` | string (bash) | writer | exit `1` while the incident holds, `0` once it is gone; tests the root-cause object, never the alert's rows |
 | `howToFix.apply` | string (bash) | writer | the fix; a human runs it, or the controller runs it as the user who creates an [IncidentApply](#incidentapply) |
 | `howToFix.verify` | string (bash) | writer | exit `0` once the fix worked, `1` if it did not |
 | `howToFix.rollback` | string (bash) | writer | undoes apply; a human runs it to revert an applied fix. Never run by the controller, moves no state |
-| `checks[]` | at most 20 | controller | script runs, oldest first; the controller keeps the newest 20 |
-| `checks[].script` | `precondition` \| `apply` \| `verify`, required | controller | the script that ran |
-| `checks[].exit` | int 0-255 | controller | its exit code; absent for a timeout, for a pod that never ran, and for the `apply` check that records a consumed `spec.applied`. An `apply` check from an IncidentApply run carries the run's exit |
-| `checks[].at` | date-time, required | controller | when the run finished |
+| `lastChecks.precondition`, `.apply`, `.verify` | `{exit, since}` | controller | the latest result of each script. Moving back to `Open` drops the precondition result, entering `Verifying` the verify result: each describes a state that has moved on |
+| `lastChecks.*.exit` | int 0-255 | controller | the exit code; absent for a timeout, for a pod that never ran, and for the `apply` result that records a consumed `spec.applied`. An `apply` result from an IncidentApply run carries the run's exit |
+| `lastChecks.*.since` | date-time, required | controller | when the script started giving this result. A precondition or verify run with the same result leaves it, and the whole status, unchanged; every apply run sets it |
+| `verifyingSince` | date-time | controller | the start of the settle window: when the incident entered `Verifying`, or was applied again while `Verifying`. Set only while `Verifying` |
 | `resolution.by` | `verify` \| `user`, required | controller | `verify` with `Resolved`, `user` with `Closed` |
 | `resolution.at` | date-time, required | controller | when the incident ended |
 | `conditions[]` | provider-runtime `Condition` | controller | `Ready` and `Synced` from provider-runtime, plus `Reproduced` below |
@@ -107,7 +105,6 @@ It is absent until the first run.
 | `status.resolution` is set exactly when `state` is `Resolved` or `Closed` | `resolution is set exactly when state is Resolved or Closed` |
 | `Resolved` goes with `by: verify`, `Closed` with `by: user` | `Resolved goes with resolution.by verify, Closed with resolution.by user` |
 | a `Resolved` incident only becomes `Closed`; a `Closed` one stays `Closed` | `Resolved can only become Closed, and Closed is final` |
-| `status.checks` holds at most 20 entries | `Too many` |
 
 A writer's status patch that breaks a rule is rejected whole. In particular, a
 writer finishing an analysis on an incident a human already closed cannot move
@@ -144,6 +141,6 @@ reason `ApplyFinished`, its message starting with the phase
 - `v1alpha1.Incident` satisfies provider-runtime's `resource.Managed`,
   `v1alpha1.IncidentList` its `resource.ManagedList`.
 - `v1alpha1.IncidentApply` satisfies `resource.Managed` too.
-- Constants: `RequesterPolicy`, `MaxApplyOutput`, `ReasonApplyFinished`, the `Apply*` phases, `LabelAlert`, `MaxChecks`, the `State*`, `Script*`, `ResolvedBy*`,
+- Constants: `RequesterPolicy`, `MaxApplyOutput`, `ReasonApplyFinished`, the `Apply*` phases, `LabelAlert`, the `State*`, `Script*`, `ResolvedBy*`,
   `Trigger*` and `Source*` values, `TypeReproduced` and its reasons.
 - `apis.AddToScheme` registers the group.

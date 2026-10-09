@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
@@ -110,6 +111,10 @@ func example(t *testing.T) map[string]any {
 func spec(obj map[string]any) map[string]any   { return obj["spec"].(map[string]any) }
 func status(obj map[string]any) map[string]any { return obj["status"].(map[string]any) }
 
+func lastChecks(obj map[string]any) map[string]any {
+	return status(obj)["lastChecks"].(map[string]any)
+}
+
 // withState returns the example in state, with the resolution that state needs.
 func withState(t *testing.T, state string) map[string]any {
 	obj := example(t)
@@ -205,35 +210,22 @@ func TestValidation(t *testing.T) {
 			wantErr: "Resolved goes with resolution.by verify, Closed with resolution.by user",
 		},
 		{
-			name: "more checks than the history keeps",
-			obj: func(t *testing.T) map[string]any {
-				obj := example(t)
-				checks := make([]any, v1alpha1.MaxChecks+1)
-				for i := range checks {
-					checks[i] = map[string]any{"script": "precondition", "exit": int64(1), "at": "2026-09-25T14:03:00Z"}
-				}
-				status(obj)["checks"] = checks
-				return obj
-			},
-			wantErr: "status.checks: Too many",
-		},
-		{
 			name: "an exit code above 255",
 			obj: func(t *testing.T) map[string]any {
 				obj := example(t)
-				status(obj)["checks"].([]any)[0].(map[string]any)["exit"] = int64(256)
+				lastChecks(obj)["precondition"].(map[string]any)["exit"] = int64(256)
 				return obj
 			},
-			wantErr: "status.checks[0].exit: Invalid value",
+			wantErr: "status.lastChecks.precondition.exit: Invalid value",
 		},
 		{
-			name: "a check without a time",
+			name: "a result without a since",
 			obj: func(t *testing.T) map[string]any {
 				obj := example(t)
-				delete(status(obj)["checks"].([]any)[0].(map[string]any), "at")
+				delete(lastChecks(obj)["verify"].(map[string]any), "since")
 				return obj
 			},
-			wantErr: "status.checks[0].at: Required value",
+			wantErr: "status.lastChecks.verify.since: Required value",
 		},
 		{
 			name: "the first status write",
@@ -244,7 +236,7 @@ func TestValidation(t *testing.T) {
 			},
 			obj: func(t *testing.T) map[string]any {
 				obj := example(t)
-				obj["status"] = map[string]any{"state": "Analyzing", "firings": int64(1), "lastFiredAt": "2026-09-25T14:00:00Z"}
+				obj["status"] = map[string]any{"state": "Analyzing"}
 				return obj
 			},
 		},
@@ -386,10 +378,6 @@ func TestConstantsMatchCRD(t *testing.T) {
 	s := openAPISchema(t)
 	st := s.Properties["status"]
 
-	if got := st.Properties["checks"].MaxItems; got == nil || *got != v1alpha1.MaxChecks {
-		t.Errorf("status.checks maxItems = %v, want %d", got, v1alpha1.MaxChecks)
-	}
-
 	enum := func(p apiextensions.JSONSchemaProps) []string {
 		var out []string
 		for _, e := range p.Enum {
@@ -404,8 +392,12 @@ func TestConstantsMatchCRD(t *testing.T) {
 	if d := cmp.Diff(states, enum(st.Properties["state"])); d != "" {
 		t.Errorf("status.state enum differs from the State constants (-want +got):\n%s", d)
 	}
-	scripts := []string{string(v1alpha1.ScriptPrecondition), string(v1alpha1.ScriptApply), string(v1alpha1.ScriptVerify)}
-	if d := cmp.Diff(scripts, enum(st.Properties["checks"].Items.Schema.Properties["script"])); d != "" {
-		t.Errorf("status.checks[].script enum differs from the Script constants (-want +got):\n%s", d)
+	var scripts []string
+	for k := range st.Properties["lastChecks"].Properties {
+		scripts = append(scripts, k)
+	}
+	want := []string{string(v1alpha1.ScriptApply), string(v1alpha1.ScriptPrecondition), string(v1alpha1.ScriptVerify)}
+	if d := cmp.Diff(want, scripts, cmpopts.SortSlices(func(a, b string) bool { return a < b })); d != "" {
+		t.Errorf("status.lastChecks keys differ from the Script constants (-want +got):\n%s", d)
 	}
 }

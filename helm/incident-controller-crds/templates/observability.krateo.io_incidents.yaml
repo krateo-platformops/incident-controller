@@ -26,9 +26,6 @@ spec:
     - jsonPath: .status.state
       name: State
       type: string
-    - jsonPath: .status.firings
-      name: Firings
-      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -37,8 +34,8 @@ spec:
       openAPIV3Schema:
         description: |-
           An Incident is one occurrence of an alert's problem, from its root-cause analysis to its end. An
-          Alert has any number of Incidents: while it fires, a firing counts on an open Incident that
-          describes the same problem, and opens a new one when none does. Its own checks resolve it, or a
+          Alert has any number of Incidents: while it fires, a firing an open Incident describes opens
+          nothing, and a firing none describes opens a new one. Its own checks resolve it, or a
           human closes it; the Alert returning to OK does neither.
         properties:
           apiVersion:
@@ -92,7 +89,7 @@ spec:
                 description: |-
                   Applied says a human ran the apply script: in a terminal followed by "I applied it", or with
                   the portal's Apply. The controller consumes it: it moves an Open incident to Verifying,
-                  appends an apply check and sets applied back to false.
+                  records an apply result and sets applied back to false.
                 type: boolean
               closed:
                 description: Closed says a human closed the incident. It moves any
@@ -150,37 +147,6 @@ spec:
                 items:
                   type: string
                 type: array
-              checks:
-                description: Checks is the history of script runs, oldest first. Writers
-                  keep the newest 20.
-                items:
-                  description: Check is one run of a how-to-fix script.
-                  properties:
-                    at:
-                      description: At is when the run finished.
-                      format: date-time
-                      type: string
-                    exit:
-                      description: |-
-                        Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
-                        that never ran) and on the apply check that records a consumed spec.applied.
-                      format: int32
-                      maximum: 255
-                      minimum: 0
-                      type: integer
-                    script:
-                      description: Script is the script that ran.
-                      enum:
-                      - precondition
-                      - apply
-                      - verify
-                      type: string
-                  required:
-                  - at
-                  - script
-                  type: object
-                maxItems: 20
-                type: array
               completedAt:
                 description: CompletedAt is when the root-cause analysis finished.
                 format: date-time
@@ -224,13 +190,6 @@ spec:
               error:
                 description: Error is why the root-cause analysis failed.
                 type: string
-              firings:
-                description: |-
-                  Firings counts the alert's firings this incident covers, the one that opened it included. The
-                  writer counts one per evaluation, about every 60 s, while the alert fires.
-                format: int32
-                minimum: 0
-                type: integer
               howToFix:
                 description: HowToFix is the fix the root-cause analysis wrote.
                 properties:
@@ -290,10 +249,72 @@ spec:
                     description: Verify tests whether the fix worked.
                     type: string
                 type: object
-              lastFiredAt:
-                description: LastFiredAt is when the alert last fired for this incident.
-                format: date-time
-                type: string
+              lastChecks:
+                description: |-
+                  LastChecks is the latest result of each script. It changes only when a result does, so a
+                  check that keeps giving the same result writes nothing.
+                properties:
+                  apply:
+                    description: LastCheck is the latest result of a script.
+                    properties:
+                      exit:
+                        description: |-
+                          Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
+                          that never ran) and on the apply result that records a consumed spec.applied.
+                        format: int32
+                        maximum: 255
+                        minimum: 0
+                        type: integer
+                      since:
+                        description: |-
+                          Since is when the script started giving this result. A precondition or verify run that gives
+                          the same result again leaves it unchanged; every apply run sets it.
+                        format: date-time
+                        type: string
+                    required:
+                    - since
+                    type: object
+                  precondition:
+                    description: LastCheck is the latest result of a script.
+                    properties:
+                      exit:
+                        description: |-
+                          Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
+                          that never ran) and on the apply result that records a consumed spec.applied.
+                        format: int32
+                        maximum: 255
+                        minimum: 0
+                        type: integer
+                      since:
+                        description: |-
+                          Since is when the script started giving this result. A precondition or verify run that gives
+                          the same result again leaves it unchanged; every apply run sets it.
+                        format: date-time
+                        type: string
+                    required:
+                    - since
+                    type: object
+                  verify:
+                    description: LastCheck is the latest result of a script.
+                    properties:
+                      exit:
+                        description: |-
+                          Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
+                          that never ran) and on the apply result that records a consumed spec.applied.
+                        format: int32
+                        maximum: 255
+                        minimum: 0
+                        type: integer
+                      since:
+                        description: |-
+                          Since is when the script started giving this result. A precondition or verify run that gives
+                          the same result again leaves it unchanged; every apply run sets it.
+                        format: date-time
+                        type: string
+                    required:
+                    - since
+                    type: object
+                type: object
               missingContext:
                 description: MissingContext is what the analysis could not see but
                   needed.
@@ -391,6 +412,12 @@ spec:
                 - Verifying
                 - Resolved
                 - Closed
+                type: string
+              verifyingSince:
+                description: |-
+                  VerifyingSince is when the incident last entered Verifying, or was applied again while
+                  Verifying: the start of the settle window. It is set only while Verifying.
+                format: date-time
                 type: string
             type: object
             x-kubernetes-validations:
