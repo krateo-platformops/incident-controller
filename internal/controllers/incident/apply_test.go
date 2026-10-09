@@ -444,10 +444,10 @@ func TestApplyRecordsTheRun(t *testing.T) {
 			if inc.Status.State != tc.state {
 				t.Errorf("incident state: want %s, got %s", tc.state, inc.Status.State)
 			}
-			if n := len(inc.Status.Checks); n != 1 || inc.Status.Checks[0].Script != v1alpha1.ScriptApply ||
-				inc.Status.Checks[0].Exit == nil || *inc.Status.Checks[0].Exit != tc.code {
-				t.Errorf("want one apply check with exit %d, got %+v", tc.code, inc.Status.Checks)
+			if lc := inc.Status.LastChecks; lc == nil || lc.Apply == nil || lc.Apply.Exit == nil || *lc.Apply.Exit != tc.code {
+				t.Errorf("want an apply result with exit %d, got %+v", tc.code, lc)
 			}
+			recordedAt := inc.ResourceVersion
 
 			var last recordedEvent
 			for _, ev := range env.events.events {
@@ -470,8 +470,8 @@ func TestApplyRecordsTheRun(t *testing.T) {
 				t.Fatal(err)
 			}
 			env.get(t, &inc, "krateo-system", "cd-not-ready-20260925-140000")
-			if len(inc.Status.Checks) != 1 {
-				t.Errorf("the run must be recorded once, got %+v", inc.Status.Checks)
+			if inc.ResourceVersion != recordedAt {
+				t.Errorf("the run must be recorded once: resourceVersion %s, want %s", inc.ResourceVersion, recordedAt)
 			}
 		})
 	}

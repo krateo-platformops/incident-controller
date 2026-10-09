@@ -21,7 +21,6 @@ import (
 
 	"github.com/krateo-platformops/plumbing/kubeutil/event"
 	"github.com/krateo-platformops/provider-runtime/pkg/logging"
-	"github.com/krateo-platformops/provider-runtime/pkg/meta"
 	"github.com/krateo-platformops/provider-runtime/pkg/reconciler"
 	"github.com/krateo-platformops/provider-runtime/pkg/test"
 
@@ -118,7 +117,7 @@ func kindOf(o client.Object) string {
 
 func newExternal(k *kube, now time.Time) *external {
 	return &external{
-		kube: k, cfg: cfg, pods: pods,
+		kube: k, cfg: cfg, pods: pods, runs: newLastRuns(),
 		log: logging.NewNopLogger(), rec: event.NewNopRecorder(),
 		now: func() time.Time { return now },
 	}
@@ -126,7 +125,7 @@ func newExternal(k *kube, now time.Time) *external {
 
 // checkPod is a check pod of inc for s, created at created. A nil code keeps it running.
 func checkPod(inc *v1alpha1.Incident, s v1alpha1.Script, created time.Time, code *int32, finished time.Time) corev1.Pod {
-	p := pods.Pod(inc, s)
+	p := pods.Pod(inc, s, time.Time{})
 	p.CreationTimestamp = metav1.NewTime(created)
 	p.Status.Phase = corev1.PodRunning
 	p.Status.StartTime = ptr.To(metav1.NewTime(created))
@@ -147,11 +146,12 @@ func TestObserve(t *testing.T) {
 	open := func(opts ...incOpt) *v1alpha1.Incident {
 		return newIncident(v1alpha1.StateOpen, append([]incOpt{withReproduced(metav1.ConditionTrue)}, opts...)...)
 	}
-	lastRun := withChecks(check(v1alpha1.ScriptPrecondition, exit(1), 9*time.Minute+30*time.Second))
+	lastRun := t0.Add(9*time.Minute + 30*time.Second)
 
 	cases := []struct {
 		name      string
 		inc       *v1alpha1.Incident
+		lastRun   time.Time
 		pods      func(inc *v1alpha1.Incident) []corev1.Pod
 		want      reconciler.ExternalObservation
 		wantState v1alpha1.State
@@ -159,14 +159,19 @@ func TestObserve(t *testing.T) {
 		wantCalls []string // of the Update that follows, when the observation asks for one
 	}{
 		{
-			name:      "a due check with no pod is created",
+			name:      "a due check with no pod is started by Update, with no status write",
 			inc:       open(),
-			want:      reconciler.ExternalObservation{ResourceExists: false},
+			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
 			wantState: v1alpha1.StateOpen,
+			wantCalls: []string{
+				"create pod check-0b7c3a3e1d2f-precondition-0",
+				"create configmap check-0b7c3a3e1d2f-precondition-0",
+			},
 		},
 		{
 			name:      "a check that is not due waits",
-			inc:       open(lastRun),
+			inc:       open(),
+			lastRun:   lastRun,
 			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
 			wantState: v1alpha1.StateOpen,
 		},
@@ -191,8 +196,8 @@ func TestObserve(t *testing.T) {
 			wantCalls: []string{"update status", "delete pod check-0b7c3a3e1d2f-precondition-0"},
 		},
 		{
-			name: "a result already recorded is not recorded again",
-			inc:  open(withChecks(check(v1alpha1.ScriptPrecondition, exit(1), 9*time.Minute+40*time.Second))),
+			name: "the same result again writes nothing",
+			inc:  open(withLastChecks(v1alpha1.LastChecks{Precondition: lc(exit(1), 5*time.Minute)})),
 			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
 				p := checkPod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, now.Add(-30*time.Second), exit(1), now.Add(-20*time.Second))
 				return []corev1.Pod{p}
@@ -204,7 +209,7 @@ func TestObserve(t *testing.T) {
 		},
 		{
 			name: "the result of a script no longer current is dropped",
-			inc:  newIncident(v1alpha1.StateVerifying, withChecks(check(v1alpha1.ScriptApply, nil, 9*time.Minute+50*time.Second))),
+			inc:  newIncident(v1alpha1.StateVerifying, withVerifyingSince(9*time.Minute+50*time.Second)),
 			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
 				return []corev1.Pod{checkPod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, now.Add(-30*time.Second), exit(0), now.Add(-5*time.Second))}
 			},
@@ -234,7 +239,8 @@ func TestObserve(t *testing.T) {
 		},
 		{
 			name:      "spec.applied is persisted in the status before it is reset",
-			inc:       open(withSpec(true, false), lastRun),
+			inc:       open(withSpec(true, false)),
+			lastRun:   lastRun,
 			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
 			wantState: v1alpha1.StateVerifying,
 			wantCalls: []string{"update status", "update spec applied=false"},
@@ -263,14 +269,6 @@ func TestObserve(t *testing.T) {
 			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
 			wantState: v1alpha1.StateOpen,
 		},
-		{
-			name: "an interrupted create is adopted",
-			inc: open(func(i *v1alpha1.Incident) {
-				meta.SetExternalCreatePending(i, now.Add(-time.Minute))
-			}),
-			want:      reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
-			wantState: v1alpha1.StateOpen,
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -280,6 +278,9 @@ func TestObserve(t *testing.T) {
 			}
 			k := newKube(p...)
 			e := newExternal(k, now)
+			if !tc.lastRun.IsZero() {
+				e.runs.seen(tc.inc.UID, tc.lastRun)
+			}
 			obs, err := e.Observe(context.Background(), tc.inc)
 			if err != nil {
 				t.Fatal(err)
@@ -294,7 +295,10 @@ func TestObserve(t *testing.T) {
 			if n := len(e.plan.stale); n != tc.wantStale {
 				t.Errorf("stale pods = %d, want %d", n, tc.wantStale)
 			}
-			if obs.ResourceExists && !obs.ResourceUpToDate {
+			if !obs.ResourceExists {
+				t.Fatal("an Incident always exists")
+			}
+			if !obs.ResourceUpToDate {
 				if err := e.Update(context.Background(), tc.inc); err != nil {
 					t.Fatal(err)
 				}
@@ -350,7 +354,7 @@ func TestUpdateStartsTheNextDueCheck(t *testing.T) {
 	now := t0.Add(10 * time.Minute)
 	// A result recorded long ago whose pod is still there: delete it and start the next run.
 	inc := newIncident(v1alpha1.StateOpen, withReproduced(metav1.ConditionTrue),
-		withChecks(check(v1alpha1.ScriptPrecondition, exit(1), time.Minute)))
+		withLastChecks(v1alpha1.LastChecks{Precondition: lc(exit(1), 0)}))
 	old := checkPod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, t0, exit(1), t0.Add(time.Minute))
 	k := newKube(old)
 	e := newExternal(k, now)
@@ -370,10 +374,10 @@ func TestUpdateStartsTheNextDueCheck(t *testing.T) {
 	}
 }
 
-func TestCreate(t *testing.T) {
+func TestStartCheck(t *testing.T) {
 	inc := newIncident(v1alpha1.StateOpen)
 	k := newKube()
-	if err := newExternal(k, t0).Create(context.Background(), inc); err != nil {
+	if err := newExternal(k, t0).startCheck(context.Background(), inc, v1alpha1.ScriptPrecondition); err != nil {
 		t.Fatal(err)
 	}
 	if len(k.created) != 2 {
@@ -407,10 +411,10 @@ func TestCreate(t *testing.T) {
 	}
 }
 
-func TestCreateAfterAPartialCreate(t *testing.T) {
+func TestStartCheckAfterAPartialStart(t *testing.T) {
 	inc := newIncident(v1alpha1.StateOpen)
-	k := newKube(*pods.Pod(inc, v1alpha1.ScriptPrecondition))
-	if err := newExternal(k, t0).Create(context.Background(), inc); err != nil {
+	k := newKube(*pods.Pod(inc, v1alpha1.ScriptPrecondition, time.Time{}))
+	if err := newExternal(k, t0).startCheck(context.Background(), inc, v1alpha1.ScriptPrecondition); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
@@ -447,7 +451,7 @@ func TestPodEnforcesTheSandbox(t *testing.T) {
 			SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(true), AllowPrivilegeEscalation: ptr.To(true)},
 		}},
 	}}
-	p := loose.Pod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition)
+	p := loose.Pod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, time.Time{})
 	sc := p.Spec.Containers[0].SecurityContext
 	switch {
 	case p.Spec.HostNetwork:
@@ -566,20 +570,35 @@ func TestLoadPodTemplate(t *testing.T) {
 }
 
 func TestPollIntervalHook(t *testing.T) {
-	ranAgo := func(d time.Duration) *v1alpha1.Incident {
-		return newIncident(v1alpha1.StateOpen, withChecks(v1alpha1.Check{
-			Script: v1alpha1.ScriptPrecondition, Exit: exit(1), At: metav1.NewTime(time.Now().Add(-d)),
-		}))
+	ranAgo := func(d time.Duration) time.Duration {
+		runs := newLastRuns()
+		inc := newIncident(v1alpha1.StateOpen)
+		runs.seen(inc.UID, time.Now().Add(-d))
+		return runs.pollIntervalHook(inc, time.Minute)
 	}
-	justRan := ranAgo(40 * time.Second)
-	if got := pollIntervalHook(newIncident(v1alpha1.StateAnalyzing), time.Minute); got != time.Minute {
+	if got := newLastRuns().pollIntervalHook(newIncident(v1alpha1.StateAnalyzing), time.Minute); got != time.Minute {
 		t.Errorf("no script: %v, want the poll interval", got)
 	}
-	if got := pollIntervalHook(ranAgo(time.Hour), time.Minute); got != time.Minute {
+	if got := newLastRuns().pollIntervalHook(newIncident(v1alpha1.StateOpen), time.Minute); got != time.Minute {
+		t.Errorf("no run known: %v, want the poll interval", got)
+	}
+	if got := ranAgo(time.Hour); got != time.Minute {
 		t.Errorf("a check due: %v, want the poll interval", got)
 	}
-	if got := pollIntervalHook(justRan, time.Minute); got < 15*time.Second || got > 21*time.Second {
+	if got := ranAgo(40 * time.Second); got < 15*time.Second || got > 21*time.Second {
 		t.Errorf("next check in ~20s: %v", got)
+	}
+}
+
+func TestLastRunsForgetsADeletedIncident(t *testing.T) {
+	inc := newIncident(v1alpha1.StateOpen, func(i *v1alpha1.Incident) { i.DeletionTimestamp = ptr.To(metav1.NewTime(t0)) })
+	e := newExternal(newKube(), t0)
+	e.runs.seen(inc.UID, t0)
+	if _, err := e.Observe(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.runs.get(inc.UID); !got.IsZero() {
+		t.Errorf("last run = %v, want none", got)
 	}
 }
 
@@ -590,7 +609,7 @@ func TestPodPassesRestrictedPodSecurity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := pods.Pod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition)
+	p := pods.Pod(newIncident(v1alpha1.StateOpen), v1alpha1.ScriptPrecondition, time.Time{})
 	lv := psaapi.LevelVersion{Level: psaapi.LevelRestricted, Version: psaapi.LatestVersion()}
 	if r := policy.AggregateCheckResults(evaluator.EvaluatePod(lv, &p.ObjectMeta, &p.Spec)); !r.Allowed {
 		t.Errorf("the check pod violates restricted: %s", r.ForbiddenDetail())

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	prv1 "github.com/krateo-platformops/provider-runtime/apis/common/v1"
 
@@ -86,74 +88,81 @@ func reproduced(inc *v1alpha1.Incident) bool {
 	return inc.GetCondition(v1alpha1.TypeReproduced).Status != metav1.ConditionUnknown
 }
 
-func lastCheck(inc *v1alpha1.Incident) *v1alpha1.Check {
-	if n := len(inc.Status.Checks); n > 0 {
-		return &inc.Status.Checks[n-1]
+// slot is the lastChecks entry of s.
+func slot(lc *v1alpha1.LastChecks, s v1alpha1.Script) **v1alpha1.LastCheck {
+	switch s {
+	case v1alpha1.ScriptPrecondition:
+		return &lc.Precondition
+	case v1alpha1.ScriptApply:
+		return &lc.Apply
 	}
-	return nil
+	return &lc.Verify
 }
 
-// nextCheckAt is when the next check may start: a poll interval after the last one. It is the
-// zero time when no check has run yet.
-func nextCheckAt(inc *v1alpha1.Incident, poll time.Duration) time.Time {
-	if c := lastCheck(inc); c != nil {
-		return c.At.Add(poll)
+// setLastCheck records a result of s at at. A precondition or verify result equal to the one
+// recorded keeps its since, so a check that keeps giving the same result changes nothing. Every
+// apply run replaces the entry.
+func setLastCheck(inc *v1alpha1.Incident, s v1alpha1.Script, exit *int32, at time.Time) {
+	if inc.Status.LastChecks == nil {
+		inc.Status.LastChecks = &v1alpha1.LastChecks{}
 	}
-	return time.Time{}
+	p := slot(inc.Status.LastChecks, s)
+	if s != v1alpha1.ScriptApply && *p != nil && ptr.Equal((*p).Exit, exit) {
+		return
+	}
+	*p = &v1alpha1.LastCheck{Exit: exit, Since: metav1.NewTime(at).Rfc3339Copy()}
+}
+
+func clearLastCheck(inc *v1alpha1.Incident, s v1alpha1.Script) {
+	if inc.Status.LastChecks != nil {
+		*slot(inc.Status.LastChecks, s) = nil
+	}
+}
+
+// checkFrom is when the wait for the next check started: the end of the last run, or the start of
+// the settle window when that is later. It is the zero time when neither is known.
+func checkFrom(inc *v1alpha1.Incident, lastRun time.Time) time.Time {
+	if v := inc.Status.VerifyingSince; v != nil && v.After(lastRun) {
+		return v.Time
+	}
+	return lastRun
+}
+
+// nextCheckAt is when the next check may start: a poll interval after checkFrom. It is the zero
+// time when no check has run.
+func nextCheckAt(inc *v1alpha1.Incident, lastRun time.Time, poll time.Duration) time.Time {
+	from := checkFrom(inc, lastRun)
+	if from.IsZero() {
+		return from
+	}
+	return from.Add(poll)
 }
 
 // checkDue reports whether the current script should start at now.
-func checkDue(inc *v1alpha1.Incident, cfg Config, now time.Time) bool {
-	return currentScript(inc) != "" && !now.Before(nextCheckAt(inc, cfg.PollInterval))
+func checkDue(inc *v1alpha1.Incident, cfg Config, lastRun, now time.Time) bool {
+	return currentScript(inc) != "" && !now.Before(nextCheckAt(inc, lastRun, cfg.PollInterval))
 }
 
-// settleWindowStart is when the incident entered Verifying: the time of the newest check that is
-// neither a verify run nor a failed apply, the precondition exit 0 or the apply check that moved
-// it. When the history holds no such check, the oldest is used, which ends the window no later
-// than the real one.
-func settleWindowStart(inc *v1alpha1.Incident) time.Time {
-	checks := inc.Status.Checks
-	for i := len(checks) - 1; i >= 0; i-- {
-		if checks[i].Script != v1alpha1.ScriptVerify && !failedApply(checks[i]) {
-			return checks[i].At.Time
-		}
-	}
-	if len(checks) > 0 {
-		return checks[0].At.Time
-	}
-	return time.Time{}
+// enterVerifying starts the settle window at at. The verify result of an earlier window is
+// dropped: it describes a fix that no longer applies.
+func enterVerifying(inc *v1alpha1.Incident, at time.Time) {
+	inc.Status.VerifyingSince = ptr.To(metav1.NewTime(at).Rfc3339Copy())
+	clearLastCheck(inc, v1alpha1.ScriptVerify)
 }
 
-// failedApply reports whether c is an apply run that exited non-zero.
-func failedApply(c v1alpha1.Check) bool {
-	return c.Script == v1alpha1.ScriptApply && c.Exit != nil && *c.Exit != 0
-}
-
-// recorded reports whether r is already in the check history. Results carry deterministic
-// times, so a result recorded by an earlier reconcile whose pod was not yet deleted is not
-// recorded twice.
-func recorded(inc *v1alpha1.Incident, r result) bool {
-	at := metav1.NewTime(r.at).Rfc3339Copy()
-	for _, c := range inc.Status.Checks {
-		if c.Script == r.script && c.At.Equal(&at) {
-			return true
-		}
-	}
-	return false
-}
-
-func appendCheck(inc *v1alpha1.Incident, c v1alpha1.Check) {
-	c.At = c.At.Rfc3339Copy()
-	checks := append(inc.Status.Checks, c)
-	if n := len(checks); n > v1alpha1.MaxChecks {
-		checks = append([]v1alpha1.Check(nil), checks[n-v1alpha1.MaxChecks:]...)
-	}
-	inc.Status.Checks = checks
-}
-
-func setState(inc *v1alpha1.Incident, to v1alpha1.State, why string) change {
+func setState(inc *v1alpha1.Incident, to v1alpha1.State, why string, at time.Time) change {
 	from := inc.Status.State
 	inc.Status.State = to
+	switch to {
+	case v1alpha1.StateVerifying:
+		enterVerifying(inc, at)
+	case v1alpha1.StateOpen:
+		// The precondition result that left Open describes a state that has moved on.
+		clearLastCheck(inc, v1alpha1.ScriptPrecondition)
+	}
+	if to != v1alpha1.StateVerifying {
+		inc.Status.VerifyingSince = nil
+	}
 	if from == "" {
 		from = "none"
 	}
@@ -168,7 +177,7 @@ func applySpec(inc *v1alpha1.Incident, now time.Time) (changes []change, consume
 		if state == v1alpha1.StateClosed {
 			return nil, false
 		}
-		c := setState(inc, v1alpha1.StateClosed, "spec.closed")
+		c := setState(inc, v1alpha1.StateClosed, "spec.closed", now)
 		inc.Status.Resolution = &v1alpha1.Resolution{By: v1alpha1.ResolvedByUser, At: metav1.NewTime(now).Rfc3339Copy()}
 		return []change{c}, false
 	}
@@ -177,25 +186,23 @@ func applySpec(inc *v1alpha1.Incident, now time.Time) (changes []change, consume
 	}
 	switch state {
 	case v1alpha1.StateOpen:
-		appendCheck(inc, v1alpha1.Check{Script: v1alpha1.ScriptApply, At: metav1.NewTime(now)})
-		return []change{setState(inc, v1alpha1.StateVerifying, "spec.applied")}, true
+		setLastCheck(inc, v1alpha1.ScriptApply, nil, now)
+		return []change{setState(inc, v1alpha1.StateVerifying, "spec.applied", now)}, true
 	case v1alpha1.StateVerifying:
-		// A human applied again: record it, which restarts the settle window. An apply check with
-		// no verify run after it is this same apply, left unconsumed by a failed spec update.
-		if c := lastCheck(inc); c != nil && c.Script == v1alpha1.ScriptApply {
-			return nil, true
-		}
-		appendCheck(inc, v1alpha1.Check{Script: v1alpha1.ScriptApply, At: metav1.NewTime(now)})
+		// A human applied again: record it and restart the settle window.
+		setLastCheck(inc, v1alpha1.ScriptApply, nil, now)
+		enterVerifying(inc, now)
 		return nil, true
 	}
 	// Analyzing has no fix to apply yet; Resolved and Closed are over.
 	return nil, false
 }
 
-// record appends a finished run of the current script and applies its transition. The exit
-// codes: 0 the incident is gone, 1 it holds, anything else or none is unknown and moves nothing.
+// record sets a finished run of the current script as its latest result and applies its
+// transition. The exit codes: 0 the incident is gone, 1 it holds, anything else or none is
+// unknown and moves nothing. Recording the same result twice changes nothing.
 func record(inc *v1alpha1.Incident, cfg Config, r result, now time.Time) []change {
-	appendCheck(inc, v1alpha1.Check{Script: r.script, Exit: r.exit, At: metav1.NewTime(r.at)})
+	setLastCheck(inc, r.script, r.exit, r.at)
 	if r.exit == nil || (*r.exit != 0 && *r.exit != 1) {
 		return nil
 	}
@@ -214,37 +221,46 @@ func record(inc *v1alpha1.Incident, cfg Config, r result, now time.Time) []chang
 			return []change{{reason: "Flagged", message: "the first precondition run exited 0; only spec.applied or spec.closed moves this incident"}}
 		}
 		if !holds {
-			return []change{setState(inc, v1alpha1.StateVerifying, "precondition exited 0")}
+			return []change{setState(inc, v1alpha1.StateVerifying, "precondition exited 0", r.at)}
 		}
 	case v1alpha1.ScriptVerify:
 		if !holds {
 			inc.Status.Resolution = &v1alpha1.Resolution{By: v1alpha1.ResolvedByVerify, At: metav1.NewTime(r.at).Rfc3339Copy()}
-			return []change{setState(inc, v1alpha1.StateResolved, "verify exited 0")}
+			return []change{setState(inc, v1alpha1.StateResolved, "verify exited 0", r.at)}
 		}
-		if r.at.Sub(settleWindowStart(inc)) >= cfg.SettleWindow {
-			return []change{setState(inc, v1alpha1.StateOpen, "verify exited 1 after the settle window")}
+		since := inc.Status.VerifyingSince
+		if since == nil {
+			// A Verifying incident without a window starts it at this run.
+			inc.Status.VerifyingSince = ptr.To(metav1.NewTime(r.at).Rfc3339Copy())
+			return nil
+		}
+		if r.at.Sub(since.Time) >= cfg.SettleWindow {
+			return []change{setState(inc, v1alpha1.StateOpen, "verify exited 1 after the settle window", r.at)}
 		}
 	}
 	return nil
 }
 
-// recordApply records a finished IncidentApply run on its incident: an apply check with the run's
-// exit code. Exit 0 moves an Open incident to Verifying, as spec.applied does; any other result
-// moves nothing. Only Open and Verifying incidents record a run; the others are left alone.
-// changed reports whether inc changed.
+// recordApply records a finished IncidentApply run on its incident as the latest apply result.
+// Exit 0 moves an Open incident to Verifying, as spec.applied does, and restarts the settle window
+// of a Verifying one; any other result moves nothing. Only Open and Verifying incidents record a
+// run; the others are left alone. changed reports whether inc changed: recording the same run
+// twice does not.
 func recordApply(inc *v1alpha1.Incident, r result, by string) (changes []change, changed bool) {
 	state := inc.Status.State
 	if state != v1alpha1.StateOpen && state != v1alpha1.StateVerifying {
 		return nil, false
 	}
-	if recorded(inc, r) {
-		return nil, false
+	before := inc.Status.DeepCopy()
+	setLastCheck(inc, v1alpha1.ScriptApply, r.exit, r.at)
+	if r.exit != nil && *r.exit == 0 {
+		if state == v1alpha1.StateOpen {
+			changes = append(changes, setState(inc, v1alpha1.StateVerifying, "apply exited 0, run by "+by, r.at))
+		} else if v := inc.Status.VerifyingSince; v == nil || v.Before(ptr.To(metav1.NewTime(r.at).Rfc3339Copy())) {
+			enterVerifying(inc, r.at)
+		}
 	}
-	appendCheck(inc, v1alpha1.Check{Script: v1alpha1.ScriptApply, Exit: r.exit, At: metav1.NewTime(r.at)})
-	if state == v1alpha1.StateOpen && r.exit != nil && *r.exit == 0 {
-		return []change{setState(inc, v1alpha1.StateVerifying, "apply exited 0, run by "+by)}, true
-	}
-	return nil, true
+	return changes, !equality.Semantic.DeepEqual(before, &inc.Status)
 }
 
 func reproducedCondition(s metav1.ConditionStatus, reason prv1.ConditionReason, msg string, now time.Time) prv1.Condition {

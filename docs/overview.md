@@ -19,22 +19,21 @@ or a human closes it.
 
 | Actor | Writes |
 |---|---|
-| alert-provider (the writer) | creates the Incident with its label and `spec`; writes the analysis, `howToFix`, `firings` and `lastFiredAt`; sets `Analyzing`, then `Open` |
-| incident-controller | runs precondition and verify; writes `checks`, every other state transition, `resolution` and the conditions |
+| alert-provider (the writer) | creates the Incident with its label and `spec`; writes the analysis and `howToFix`; sets `Analyzing`, then `Open` |
+| incident-controller | runs precondition and verify; writes `lastChecks`, `verifyingSince`, every other state transition, `resolution` and the conditions |
 | a human, through the portal | `spec.applied` ("I applied it", or Apply) and `spec.closed` (Close), with their own token and the `krateo-incident-responder` role; an IncidentApply (Run apply), which has the controller run the apply script with their own rights |
 
 Field by field: [api](./api.md).
 
 ## Many incidents per alert
 
-The writer evaluates each firing alert about every 60 s. A firing counts on
-the open incident (any state but `Resolved` and `Closed`) that describes the
-same problem: it adds one to that incident's `status.firings`, sets
-`status.lastFiredAt` and runs no analysis. An LLM compares the firing with each
-open incident to decide. When none is the same problem, the firing opens a new
-incident with its own analysis, so an alert can have several open incidents at
-once. An incident still `Analyzing`, or whose analysis failed, takes the firing
-without a comparison. [The writer's docs](https://github.com/krateo-platformops/alert-troubleshooter/blob/main/docs/overview.md)
+The writer evaluates each firing alert about every 60 s. A firing that an
+open incident (any state but `Resolved` and `Closed`) describes opens nothing
+and writes nothing. An LLM compares the firing with each open incident to
+decide. When none is the same problem, the firing opens a new incident with its
+own analysis, so an alert can have several open incidents at once. An incident
+still `Analyzing`, or whose analysis failed, takes the firing without a
+comparison. [The writer's docs](https://github.com/krateo-platformops/alert-troubleshooter/blob/main/docs/overview.md)
 have the details.
 
 ## Lifecycle
@@ -48,19 +47,19 @@ any state ──spec.closed──▶ Closed
 |---|---|---|
 | — | `Analyzing` | the writer's first status write |
 | `Analyzing` | `Open` | the analysis finished, or failed with `error` set |
-| `Open` | `Verifying` | precondition exit `0`; `spec.applied`, which the controller consumes: it appends an `apply` check and sets `applied` back to `false`; or an IncidentApply run that exits `0` |
+| `Open` | `Verifying` | precondition exit `0`; `spec.applied`, which the controller consumes: it records an `apply` result and sets `applied` back to `false`; or an IncidentApply run that exits `0` |
 | `Verifying` | `Resolved` | verify exit `0`, at any time |
 | `Verifying` | `Open` | verify exit `1` once the settle window has passed |
 | any | `Closed` | `spec.closed: true` |
 
 The settle window (5 minutes by default) gives a fix time to take effect. It
-starts when the incident enters `Verifying`: at the precondition exit `0` or
-the `apply` check that moved it. Inside the window a verify exit `1` is
-recorded and verify runs again at the next poll; the first exit `1` at or
-after the window's end moves the incident back to `Open`. An exit other than
-`0` or `1`, or a timeout, never moves it, inside the window or after. A human
-applying again while `Verifying` appends another `apply` check, which restarts
-the window; a failed IncidentApply run is recorded but does not.
+starts when the incident enters `Verifying` (`status.verifyingSince`): at the
+precondition exit `0` or the apply that moved it. Inside the window a verify
+exit `1` is recorded and verify runs again at the next poll; the first exit `1`
+at or after the window's end moves the incident back to `Open`. An exit other
+than `0` or `1`, or a timeout, never moves it, inside the window or after. A
+human applying again while `Verifying`, or an IncidentApply run that exits `0`,
+restarts the window; a failed IncidentApply run is recorded but does not.
 
 `Resolved` means a script proved the problem gone; `Closed` means a person
 decided. `Closed` is final, and a `Resolved` incident can only become `Closed`.
@@ -93,25 +92,39 @@ answer when the alert fires for another reason.
 ## On provider-runtime
 
 The Incident is a provider-runtime managed resource: it embeds provider-runtime's
-`ConditionedStatus` and satisfies `resource.Managed`. Its external resource is
-the check pod of the current step.
+`ConditionedStatus` and satisfies `resource.Managed`. It has no external
+resource: Observe always reports it existing, and decides from the Incident
+whether there is work to do. Check pods only carry the runs, and are where a
+run's result is read.
 
 | provider-runtime | incident-controller |
 |---|---|
-| `ExternalClient.Observe` | reads the incident's check pods; records a finished one in `status.checks` and applies its transition; applies `spec.closed` and `spec.applied`. It changes nothing but the Incident held in memory |
-| `Create` | no check pod for the current step and one is due: starts one, precondition when `Open`, verify when `Verifying` |
-| `Update` | persists the status, then sets `spec.applied` back to `false`, deletes finished and stale check pods, and starts the next check when it is due |
+| `ExternalClient.Observe` | reads the incident's check pods; records a finished one in `status.lastChecks` and applies its transition; applies `spec.closed` and `spec.applied`. A status to persist, a check pod to delete or a check that is due make the Incident out of date. It changes nothing but the Incident held in memory |
+| `Create` | never called |
+| `Update` | persists the status when it changed, then sets `spec.applied` back to `false`, deletes finished and stale check pods, and starts the next check when it is due: precondition when `Open`, verify when `Verifying` |
 | `Delete` + finalizer | the Incident is deleted: removes its check pods and ConfigMaps |
 | `WithPollInterval(1m)` | the 60 s check cadence; a poll-interval hook requeues when the next check falls due |
 | `krateo.io/paused` | pauses one incident: no checks, no transitions, `spec.closed` included |
 
-A check is due a poll interval after the last one ended. A check pod's watch
-events requeue its incident, so a finished check is read at once. Update writes
-the status before anything else, so a result is never lost with its pod and a
-consumed `spec.applied` is never lost with its flag; result times are
-deterministic, so a result whose pod outlives a failed delete is not recorded
-twice. A running check of a script that is no longer current (the incident was
-applied or closed meanwhile) is deleted and its result dropped.
+A check is due a poll interval after the last one ended, or after the
+incident entered `Verifying` when that is later. The controller holds the end
+of each incident's last run in memory, so after a restart every check is due at
+once. A check pod's watch events requeue its incident, so a finished check is
+read at once. Update writes the status before anything else, so a result is
+never lost with its pod and a consumed `spec.applied` is never lost with its
+flag. A result whose pod outlives a failed delete is recorded again and changes
+nothing. A running check of a script that is no longer current (the incident
+was applied or closed meanwhile) is deleted and its result dropped.
+
+### Writes
+
+`status.lastChecks` keeps one result per script, with `since`: when the script
+started giving it. A precondition or verify run that gives the same result as
+the last leaves the status as it is, so the controller writes nothing. An Open
+incident whose precondition keeps exiting `1` is not written to until the
+result changes, a human acts, or it is closed; a watcher of Incidents sees no
+event from it. A result that changes, a transition, and every apply run are
+one status write each.
 
 ## Run apply
 

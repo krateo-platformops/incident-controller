@@ -12,14 +12,15 @@ timestamp: 2026-09-25T00:00:00Z
 [`incident.yaml`](./incident.yaml) is one Incident of the Alert
 `compositiondefinitions-not-ready`, from its opening firing to its resolution:
 
-1. The alert fired at 14:00 and opened the incident; six more firings counted
-   on it (`status.firings: 7`).
+1. The alert fired at 14:00 and opened the incident.
 2. The root-cause analysis wrote the report, the evidence and the `howToFix`
    scripts, rollback included, and the incident became `Open`.
-3. The precondition exited `1` twice (`Reproduced=True`): the incident held.
+3. The precondition exited `1` from 14:03 on (`Reproduced=True`): the incident
+   held. Each run gave the same result, so `lastChecks.precondition.since`
+   stayed at the first.
 4. A human ran the apply script in a terminal and clicked "I applied it"
    (`spec.applied: true`). The controller consumed it: it moved the incident
-   to `Verifying`, appended the `apply` check with no exit code, and set
+   to `Verifying`, recorded an `apply` result with no exit code, and set
    `spec.applied` back to `false`.
 5. The verify script exited `0`: the incident is `Resolved`, by `verify`.
 

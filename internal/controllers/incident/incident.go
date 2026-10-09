@@ -1,6 +1,7 @@
-// Package incident is the controller of Incident managed resources. The external resource of an
-// Incident is the check pod of its current step: the precondition while Open, verify while
-// Verifying.
+// Package incident is the controller of Incident managed resources. An Incident has no external
+// resource: Observe always finds it, and decides from the Incident whether its current step, the
+// precondition while Open or verify while Verifying, has a result to record or a run to start.
+// Check pods only carry the runs.
 package incident
 
 import (
@@ -9,9 +10,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -57,12 +60,13 @@ func Setup(mgr ctrl.Manager, o Options) error {
 
 	cfg := o.Checks
 	cfg.PollInterval = o.Controller.PollInterval
+	runs := newLastRuns()
 
 	r := reconciler.NewReconciler(mgr,
 		resource.ManagedKind(v1alpha1.IncidentGroupVersionKind),
-		reconciler.WithExternalConnecter(&connector{kube: mgr.GetClient(), cfg: cfg, pods: o.Pods, log: log, rec: rec}),
+		reconciler.WithExternalConnecter(&connector{kube: mgr.GetClient(), cfg: cfg, pods: o.Pods, runs: runs, log: log, rec: rec}),
 		reconciler.WithPollInterval(cfg.PollInterval),
-		reconciler.WithPollIntervalHook(pollIntervalHook),
+		reconciler.WithPollIntervalHook(runs.pollIntervalHook),
 		reconciler.WithLogger(log),
 		reconciler.WithRecorder(rec),
 		reconciler.WithTimeout(o.Controller.Timeout),
@@ -86,13 +90,46 @@ func incidentOfPod(_ context.Context, o client.Object) []reconcile.Request {
 	return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: ns, Name: name}}}
 }
 
+// lastRuns is when each incident's last check ended. It is held in memory only: a check that
+// gives the same result writes nothing, so the status does not say when the last one ran. After a
+// restart every incident's check is due at once.
+type lastRuns struct {
+	mu sync.Mutex
+	at map[types.UID]time.Time
+}
+
+func newLastRuns() *lastRuns {
+	return &lastRuns{at: map[types.UID]time.Time{}}
+}
+
+func (l *lastRuns) get(uid types.UID) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.at[uid]
+}
+
+// seen records a run of uid that ended at at, unless a later one is known.
+func (l *lastRuns) seen(uid types.UID, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if at.After(l.at[uid]) {
+		l.at[uid] = at
+	}
+}
+
+func (l *lastRuns) forget(uid types.UID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.at, uid)
+}
+
 // pollIntervalHook requeues an incident when its next check falls due, within the poll interval.
-func pollIntervalHook(mg resource.Managed, poll time.Duration) time.Duration {
+func (l *lastRuns) pollIntervalHook(mg resource.Managed, poll time.Duration) time.Duration {
 	inc, ok := mg.(*v1alpha1.Incident)
 	if !ok || currentScript(inc) == "" {
 		return poll
 	}
-	d := time.Until(nextCheckAt(inc, poll))
+	d := time.Until(nextCheckAt(inc, l.get(inc.UID), poll))
 	switch {
 	case d <= 0:
 		// A check is running or starting; its pod's events requeue the incident.
@@ -109,6 +146,7 @@ type connector struct {
 	kube client.Client
 	cfg  Config
 	pods CheckPods
+	runs *lastRuns
 	log  logging.Logger
 	rec  event.Recorder
 }
@@ -122,6 +160,7 @@ func (c *connector) Connect(_ context.Context, mg resource.Managed) (reconciler.
 		kube: c.kube,
 		cfg:  c.cfg,
 		pods: c.pods,
+		runs: c.runs,
 		log:  c.log.WithValues("incident", inc.Namespace+"/"+inc.Name),
 		rec:  c.rec,
 		now:  time.Now,
@@ -134,6 +173,10 @@ type plan struct {
 	changes []change
 	// dirty means the status changed beyond conditions.
 	dirty bool
+	// due means the current script has no running check and its next run is due.
+	due bool
+	// from is when the wait for the due run started; it names the run's pod.
+	from time.Time
 	// consumeApplied means spec.applied was acted on and goes back to false.
 	consumeApplied bool
 	// stale are the check pods to delete: finished ones, and those of a script no longer current.
@@ -153,6 +196,9 @@ func (p plan) String() string {
 	if n := len(p.stale); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d check pod(s) to delete", n))
 	}
+	if p.due {
+		parts = append(parts, "check due")
+	}
 	return strings.Join(parts, "; ")
 }
 
@@ -160,6 +206,7 @@ type external struct {
 	kube client.Client
 	cfg  Config
 	pods CheckPods
+	runs *lastRuns
 	log  logging.Logger
 	rec  event.Recorder
 	now  func() time.Time
@@ -168,7 +215,8 @@ type external struct {
 
 // Observe reads the incident's check pods, records the finished ones and applies the resulting
 // transitions and the human decisions in spec to the status. It changes nothing outside the
-// Incident object held in memory; Update persists and acts.
+// Incident object held in memory; Update persists and acts. The Incident always exists: a status
+// to persist, a check pod to delete or a check that is due make it out of date.
 func (e *external) Observe(ctx context.Context, mg resource.Managed) (reconciler.ExternalObservation, error) {
 	inc, ok := mg.(*v1alpha1.Incident)
 	if !ok {
@@ -180,12 +228,14 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (reconciler
 		return reconciler.ExternalObservation{}, err
 	}
 	if meta.WasDeleted(inc) {
+		e.runs.forget(inc.UID)
 		return reconciler.ExternalObservation{ResourceExists: len(pods)+len(cms) > 0}, nil
 	}
 
 	now := e.now()
+	before := inc.Status.DeepCopy()
 	changes, consumed := applySpec(inc, now)
-	e.plan = plan{changes: changes, dirty: len(changes) > 0 || consumed, consumeApplied: consumed}
+	e.plan = plan{changes: changes, consumeApplied: consumed}
 
 	sort.Slice(pods, func(i, j int) bool { return pods[i].CreationTimestamp.Before(&pods[j].CreationTimestamp) })
 	for i := range pods {
@@ -201,40 +251,31 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (reconciler
 			e.plan.stale = append(e.plan.stale, *pod)
 		default:
 			// The result of a script that is no longer current is dropped: the state it tested
-			// has moved on.
-			if r.script == currentScript(inc) && !recorded(inc, r) {
+			// has moved on. A result recorded before, whose pod outlived a failed delete, records
+			// the same result again and changes nothing.
+			if r.script == currentScript(inc) {
 				e.plan.changes = append(e.plan.changes, record(inc, e.cfg, r, now)...)
-				e.plan.dirty = true
+				e.runs.seen(inc.UID, r.at)
 			}
 			e.plan.stale = append(e.plan.stale, *pod)
 		}
 	}
+	e.plan.dirty = consumed || !equality.Semantic.DeepEqual(before, &inc.Status)
+	lastRun := e.runs.get(inc.UID)
+	e.plan.due = e.plan.live == nil && checkDue(inc, e.cfg, lastRun, now)
+	e.plan.from = checkFrom(inc, lastRun)
 
 	inc.SetConditions(prv1.Available())
 
-	if e.plan.dirty || len(e.plan.stale) > 0 {
+	if e.plan.dirty || len(e.plan.stale) > 0 || e.plan.due {
 		return reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false, Diff: e.plan.String()}, nil
-	}
-	// A create interrupted before its outcome was recorded may have left no pod. Nothing leaks
-	// from a lost check pod, so such an incident reports its pod existing: the reconciler closes
-	// the handshake, and the next reconcile starts the check again.
-	if e.plan.live == nil && checkDue(inc, e.cfg, now) && !meta.ExternalCreateIncomplete(inc) {
-		return reconciler.ExternalObservation{ResourceExists: false}, nil
 	}
 	return reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true}, nil
 }
 
-// Create starts the check pod of the current script.
-func (e *external) Create(ctx context.Context, mg resource.Managed) error {
-	inc, ok := mg.(*v1alpha1.Incident)
-	if !ok {
-		return errNotIncident
-	}
-	s := currentScript(inc)
-	if s == "" {
-		return nil
-	}
-	return e.startCheck(ctx, inc, s)
+// Create is never called: Observe always finds the Incident.
+func (e *external) Create(context.Context, resource.Managed) error {
+	return nil
 }
 
 // Update persists the status Observe computed, then consumes spec.applied, deletes the stale check
@@ -266,7 +307,7 @@ func (e *external) Update(ctx context.Context, mg resource.Managed) error {
 			return fmt.Errorf("cannot delete check pod %s: %w", e.plan.stale[i].Name, err)
 		}
 	}
-	if e.plan.live == nil && checkDue(inc, e.cfg, e.now()) {
+	if e.plan.due {
 		return e.startCheck(ctx, inc, currentScript(inc))
 	}
 	return nil
@@ -311,7 +352,7 @@ func (e *external) list(ctx context.Context, inc *v1alpha1.Incident) ([]corev1.P
 // startCheck creates the check pod, then the ConfigMap with its script, owned by the pod. The
 // kubelet waits for the ConfigMap before it starts the container.
 func (e *external) startCheck(ctx context.Context, inc *v1alpha1.Incident, s v1alpha1.Script) error {
-	pod := e.pods.Pod(inc, s)
+	pod := e.pods.Pod(inc, s, e.plan.from)
 	if err := e.kube.Create(ctx, pod); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("cannot create check pod: %w", err)

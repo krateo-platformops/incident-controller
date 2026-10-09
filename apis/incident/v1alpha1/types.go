@@ -13,10 +13,6 @@ import (
 // alert's namespace.
 const LabelAlert = "observability.krateo.io/alert"
 
-// MaxChecks is the length of the check history: writers keep the newest MaxChecks entries of
-// status.checks. It matches the MaxItems marker on IncidentStatus.Checks.
-const MaxChecks = 20
-
 // State is the lifecycle state of an Incident.
 // +kubebuilder:validation:Enum=Analyzing;Open;Verifying;Resolved;Closed
 type State string
@@ -44,7 +40,8 @@ const (
 	TriggerUserAsk              Trigger = "user-ask"
 )
 
-// Script names a how-to-fix script that a check records. Rollback is never checked.
+// Script names a how-to-fix script whose result status.lastChecks records. Rollback is never
+// checked.
 // +kubebuilder:validation:Enum=precondition;apply;verify
 type Script string
 
@@ -125,7 +122,7 @@ type IncidentSpec struct {
 
 	// Applied says a human ran the apply script: in a terminal followed by "I applied it", or with
 	// the portal's Apply. The controller consumes it: it moves an Open incident to Verifying,
-	// appends an apply check and sets applied back to false.
+	// records an apply result and sets applied back to false.
 	// +optional
 	Applied bool `json:"applied,omitempty"`
 
@@ -191,20 +188,30 @@ type ApplyAction struct {
 	Payload *runtime.RawExtension `json:"payload,omitempty"`
 }
 
-// Check is one run of a how-to-fix script.
-type Check struct {
-	// Script is the script that ran.
-	Script Script `json:"script"`
-
+// LastCheck is the latest result of a script.
+type LastCheck struct {
 	// Exit is the script's exit code. It is absent when the run produced none (a timeout, a pod
-	// that never ran) and on the apply check that records a consumed spec.applied.
+	// that never ran) and on the apply result that records a consumed spec.applied.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=255
 	// +optional
 	Exit *int32 `json:"exit,omitempty"`
 
-	// At is when the run finished.
-	At metav1.Time `json:"at"`
+	// Since is when the script started giving this result. A precondition or verify run that gives
+	// the same result again leaves it unchanged; every apply run sets it.
+	Since metav1.Time `json:"since"`
+}
+
+// LastChecks holds the latest result of each script.
+type LastChecks struct {
+	// +optional
+	Precondition *LastCheck `json:"precondition,omitempty"`
+
+	// +optional
+	Apply *LastCheck `json:"apply,omitempty"`
+
+	// +optional
+	Verify *LastCheck `json:"verify,omitempty"`
 }
 
 // Resolution records how an incident ended.
@@ -289,24 +296,19 @@ type IncidentStatus struct {
 	// +optional
 	State State `json:"state,omitempty"`
 
-	// Firings counts the alert's firings this incident covers, the one that opened it included. The
-	// writer counts one per evaluation, about every 60 s, while the alert fires.
-	// +kubebuilder:validation:Minimum=0
-	// +optional
-	Firings int32 `json:"firings,omitempty"`
-
-	// LastFiredAt is when the alert last fired for this incident.
-	// +optional
-	LastFiredAt *metav1.Time `json:"lastFiredAt,omitempty"`
-
 	// HowToFix is the fix the root-cause analysis wrote.
 	// +optional
 	HowToFix *HowToFix `json:"howToFix,omitempty"`
 
-	// Checks is the history of script runs, oldest first. Writers keep the newest 20.
-	// +kubebuilder:validation:MaxItems=20
+	// LastChecks is the latest result of each script. It changes only when a result does, so a
+	// check that keeps giving the same result writes nothing.
 	// +optional
-	Checks []Check `json:"checks,omitempty"`
+	LastChecks *LastChecks `json:"lastChecks,omitempty"`
+
+	// VerifyingSince is when the incident last entered Verifying, or was applied again while
+	// Verifying: the start of the settle window. It is set only while Verifying.
+	// +optional
+	VerifyingSince *metav1.Time `json:"verifyingSince,omitempty"`
 
 	// Resolution records how the incident ended. It is set exactly when state is Resolved or Closed.
 	// +optional
@@ -352,12 +354,11 @@ type IncidentStatus struct {
 // +kubebuilder:object:root=true
 
 // An Incident is one occurrence of an alert's problem, from its root-cause analysis to its end. An
-// Alert has any number of Incidents: while it fires, a firing counts on an open Incident that
-// describes the same problem, and opens a new one when none does. Its own checks resolve it, or a
+// Alert has any number of Incidents: while it fires, a firing an open Incident describes opens
+// nothing, and a firing none describes opens a new one. Its own checks resolve it, or a
 // human closes it; the Alert returning to OK does neither.
 // +kubebuilder:printcolumn:name="Alert",type="string",JSONPath=".spec.alertRef.name"
 // +kubebuilder:printcolumn:name="State",type="string",JSONPath=".status.state"
-// +kubebuilder:printcolumn:name="Firings",type="integer",JSONPath=".status.firings"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=inc,categories={krateo,observability}
