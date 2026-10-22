@@ -128,7 +128,7 @@ an apply script someone asked for as that same user, and never as itself.
 
 ## Roles for people
 
-The portal's Close, "I applied it", Discard and Run apply act with the
+The portal's Close, "I applied it", Re-run analysis, Discard and Run apply act with the
 clicking user's own token. The chart ships two ClusterRoles for that and binds
 neither; bind them to your groups, cluster-wide or per namespace with a
 RoleBinding.
@@ -136,7 +136,7 @@ RoleBinding.
 | ClusterRole | Verbs | Allows |
 |---|---|---|
 | `krateo-incident-viewer` | get, list, watch on incidents and incidentapplies | reading incidents and their runs |
-| `krateo-incident-responder` | get, list, watch, patch, delete on incidents; get, list, watch, create on incidentapplies | Close (`spec.closed`), "I applied it" (`spec.applied`), Discard (delete), Run apply (create an IncidentApply) |
+| `krateo-incident-responder` | get, list, watch, patch, delete on incidents; get, list, watch, create on incidentapplies | Close (`spec.closed`), "I applied it" (`spec.applied`), Re-run analysis (`spec.reanalysis`), Discard (delete), Run apply (create an IncidentApply) |
 
 Run apply also needs `patch` on the incident, which the controller checks, and
 the script can do only what the user's own roles allow.

@@ -129,6 +129,37 @@ type IncidentSpec struct {
 	// Closed says a human closed the incident. It moves any state to Closed and cannot be unset.
 	// +optional
 	Closed bool `json:"closed,omitempty"`
+
+	// Reanalysis asks for a new root-cause analysis of an Open or Verifying incident. The writer
+	// (alert-provider) consumes it: it records it in status.reanalysis, moves the incident back to
+	// Analyzing, removes this field and runs the analysis again. In any other state it is removed
+	// unanswered.
+	// +optional
+	Reanalysis *ReanalysisRequest `json:"reanalysis,omitempty"`
+}
+
+// ReanalysisRequest is a request for a new root-cause analysis.
+type ReanalysisRequest struct {
+	// Feedback is what the person asking found wrong with the analysis, for the agent to address.
+	// +kubebuilder:validation:MaxLength=2000
+	// +optional
+	Feedback string `json:"feedback,omitempty"`
+}
+
+// Reanalysis records the latest consumed spec.reanalysis: the request the current analysis
+// answers.
+type Reanalysis struct {
+	// At is when the request was consumed.
+	At metav1.Time `json:"at"`
+
+	// Feedback is the request's feedback.
+	// +kubebuilder:validation:MaxLength=2000
+	// +optional
+	Feedback string `json:"feedback,omitempty"`
+
+	// Count is how many reanalyses the incident has had.
+	// +kubebuilder:validation:Minimum=1
+	Count int32 `json:"count"`
 }
 
 // HowToFix is the fix as bash scripts, written by the root-cause analysis. The controller runs
@@ -200,6 +231,13 @@ type LastCheck struct {
 	// Since is when the script started giving this result. A precondition or verify run that gives
 	// the same result again leaves it unchanged; every apply run sets it.
 	Since metav1.Time `json:"since"`
+
+	// Output is what an unknown precondition or verify run printed (the end of its log, cut to 512
+	// bytes), or why it gave no exit code. It is set only for unknown results, from the run that
+	// started giving the result.
+	// +kubebuilder:validation:MaxLength=512
+	// +optional
+	Output string `json:"output,omitempty"`
 }
 
 // LastChecks holds the latest result of each script.
@@ -349,6 +387,10 @@ type IncidentStatus struct {
 	// CompletedAt is when the root-cause analysis finished.
 	// +optional
 	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// Reanalysis is the latest spec.reanalysis the writer consumed.
+	// +optional
+	Reanalysis *Reanalysis `json:"reanalysis,omitempty"`
 }
 
 // +kubebuilder:object:root=true

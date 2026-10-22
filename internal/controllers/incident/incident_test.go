@@ -484,13 +484,18 @@ func TestResultOf(t *testing.T) {
 		p.Status.Phase, p.Status.Reason = corev1.PodFailed, "DeadlineExceeded"
 		return p
 	}
+	withMessage := func(p corev1.Pod, msg string) corev1.Pod {
+		p.Status.ContainerStatuses[0].State.Terminated.Message = msg
+		return p
+	}
 	cases := []struct {
-		name     string
-		pod      corev1.Pod
-		now      time.Time
-		wantDone bool
-		wantExit *int32
-		wantAt   time.Time
+		name       string
+		pod        corev1.Pod
+		now        time.Time
+		wantDone   bool
+		wantExit   *int32
+		wantAt     time.Time
+		wantOutput string
 	}{
 		{name: "running", pod: checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{}), now: now},
 		{name: "exit 0", pod: checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(0), t0.Add(5*time.Second)), now: now,
@@ -499,8 +504,10 @@ func TestResultOf(t *testing.T) {
 			wantDone: true, wantExit: exit(1), wantAt: t0.Add(5 * time.Second)},
 		{name: "another exit", pod: checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(2), t0.Add(5*time.Second)), now: now,
 			wantDone: true, wantExit: exit(2), wantAt: t0.Add(5 * time.Second)},
+		{name: "another exit with a message", pod: withMessage(checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(2), t0.Add(5*time.Second)), "jq: error: Invalid escape"), now: now,
+			wantDone: true, wantExit: exit(2), wantAt: t0.Add(5 * time.Second), wantOutput: "jq: error: Invalid escape"},
 		{name: "killed at the deadline", pod: deadline(checkPod(inc, v1alpha1.ScriptPrecondition, t0, exit(137), t0.Add(time.Minute))), now: now,
-			wantDone: true, wantAt: t0.Add(time.Minute)},
+			wantDone: true, wantAt: t0.Add(time.Minute), wantOutput: "the check was stopped at its 1m0s deadline"},
 		{name: "failed before running", pod: func() corev1.Pod {
 			p := checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{})
 			p.Status.Phase = corev1.PodFailed
@@ -515,7 +522,8 @@ func TestResultOf(t *testing.T) {
 			p := checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{})
 			p.Status.Phase, p.Status.StartTime = corev1.PodPending, nil
 			return p
-		}(), now: t0.Add(2 * time.Minute), wantDone: true, wantAt: t0.Add(2 * time.Minute)},
+		}(), now: t0.Add(2 * time.Minute), wantDone: true, wantAt: t0.Add(2 * time.Minute),
+			wantOutput: "the check did not finish within 2m0s of its pod's creation"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -534,6 +542,9 @@ func TestResultOf(t *testing.T) {
 			}
 			if r.script != v1alpha1.ScriptPrecondition {
 				t.Errorf("script = %s", r.script)
+			}
+			if r.output != tc.wantOutput {
+				t.Errorf("output = %q, want %q", r.output, tc.wantOutput)
 			}
 		})
 	}

@@ -264,7 +264,11 @@ func resultOf(pod *corev1.Pod, timeout time.Duration, now time.Time) (r result, 
 			return r, false
 		}
 		r.at = overdue
+		r.output = fmt.Sprintf("the check did not finish within %s of its pod's creation", timeout+pendingGrace)
 		return r, true
+	}
+	if pod.Status.Reason == "DeadlineExceeded" {
+		r.output = fmt.Sprintf("the check was stopped at its %s deadline", timeout)
 	}
 
 	r.at = overdue
@@ -281,6 +285,8 @@ func resultOf(pod *corev1.Pod, timeout time.Duration, now time.Time) (r result, 
 		}
 		if pod.Status.Reason != "DeadlineExceeded" && t.ExitCode >= 0 && t.ExitCode <= 255 {
 			r.exit = ptr.To(t.ExitCode)
+			// The container's termination message falls back to the end of its log on a failure.
+			r.output = t.Message
 		}
 	}
 	return r, true

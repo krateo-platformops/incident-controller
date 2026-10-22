@@ -1,6 +1,7 @@
 package incident
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,16 @@ func withoutHowToFix(inc *v1alpha1.Incident) { inc.Status.HowToFix = nil }
 // lc is a result with exit code, given since d after t0.
 func lc(code *int32, d time.Duration) *v1alpha1.LastCheck {
 	return &v1alpha1.LastCheck{Exit: code, Since: at(d)}
+}
+
+func withOutput(c *v1alpha1.LastCheck, out string) *v1alpha1.LastCheck {
+	c.Output = out
+	return c
+}
+
+func printed(r result, out string) result {
+	r.output = out
+	return r
 }
 
 // want is the part of the status a transition decides.
@@ -186,6 +197,12 @@ func TestRecordPrecondition(t *testing.T) {
 			want: want{state: v1alpha1.StateOpen, lastChecks: &v1alpha1.LastChecks{Precondition: lc(nil, 0)}, reproduced: metav1.ConditionTrue}},
 		{name: "another result replaces it", inc: reproducedOpen(withLastChecks(v1alpha1.LastChecks{Precondition: lc(exit(1), 0)})), r: run(exit(2)),
 			want: want{state: v1alpha1.StateOpen, lastChecks: ran(exit(2)), reproduced: metav1.ConditionTrue}},
+		{name: "an unknown result keeps its output", inc: reproducedOpen(), r: printed(run(exit(2)), "  error: you must specify only one resource\n"),
+			want: want{state: v1alpha1.StateOpen, lastChecks: &v1alpha1.LastChecks{Precondition: withOutput(lc(exit(2), time.Minute), "error: you must specify only one resource")}, reproduced: metav1.ConditionTrue}},
+		{name: "the same unknown result again keeps the first output", inc: reproducedOpen(withLastChecks(v1alpha1.LastChecks{Precondition: withOutput(lc(exit(2), 0), "first")})), r: printed(run(exit(2)), "second"),
+			want: want{state: v1alpha1.StateOpen, lastChecks: &v1alpha1.LastChecks{Precondition: withOutput(lc(exit(2), 0), "first")}, reproduced: metav1.ConditionTrue}},
+		{name: "a verdict keeps no output", inc: reproducedOpen(), r: printed(run(exit(1)), "holds"),
+			want: want{state: v1alpha1.StateOpen, lastChecks: ran(exit(1)), reproduced: metav1.ConditionTrue}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -384,5 +401,27 @@ func TestLifecycle(t *testing.T) {
 	}
 	if inc.Status.VerifyingSince != nil {
 		t.Fatalf("verifyingSince = %v, want unset once Resolved", inc.Status.VerifyingSince)
+	}
+}
+
+func TestOutputOf(t *testing.T) {
+	long := strings.Repeat("a", maxOutput-1) + "é" + "tail"
+	cases := []struct {
+		name string
+		exit *int32
+		out  string
+		want string
+	}{
+		{name: "a verdict keeps nothing", exit: exit(0), out: "gone", want: ""},
+		{name: "an unknown exit keeps the output, trimmed", exit: exit(2), out: "\n jq: error \n", want: "jq: error"},
+		{name: "no exit keeps the reason", exit: nil, out: "timed out", want: "timed out"},
+		{name: "a long output is cut on a rune boundary", exit: exit(2), out: long, want: strings.Repeat("a", maxOutput-1)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := outputOf(tc.exit, tc.out); got != tc.want {
+				t.Errorf("outputOf = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

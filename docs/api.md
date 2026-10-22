@@ -46,6 +46,7 @@ kubectl get incidents -n krateo-system -l observability.krateo.io/alert=composit
 | `triggeredAt` | date-time | writer | when the opening firing arrived |
 | `applied` | bool | human: "I applied it", or the portal's Apply; reset by the controller | the apply script ran. The controller consumes it: it moves Open to Verifying, records an `apply` result and sets `applied` back to `false` |
 | `closed` | bool | human: the portal's Close | moves any state to Closed |
+| `reanalysis` | `{feedback}` | human: the portal's Re-run analysis; removed by the writer | asks for a new analysis of an `Open` or `Verifying` incident. The writer consumes it: it records it in `status.reanalysis`, moves the incident back to `Analyzing`, removes the field and runs the analysis again with the previous one, the checks' results and `feedback` (at most 2000 characters). In any other state it is removed unanswered |
 
 ## status
 
@@ -61,6 +62,7 @@ Lifecycle and checks:
 | `lastChecks.precondition`, `.apply`, `.verify` | `{exit, since}` | controller | the latest result of each script. Moving back to `Open` drops the precondition result, entering `Verifying` the verify result: each describes a state that has moved on |
 | `lastChecks.*.exit` | int 0-255 | controller | the exit code; absent for a timeout, for a pod that never ran, and for the `apply` result that records a consumed `spec.applied`. An `apply` result from an IncidentApply run carries the run's exit |
 | `lastChecks.*.since` | date-time, required | controller | when the script started giving this result. A precondition or verify run with the same result leaves it, and the whole status, unchanged; every apply run sets it |
+| `lastChecks.*.output` | string, at most 512 bytes | controller | for an unknown precondition or verify result only: what the run printed (the end of its log), or why it gave no exit code. Kept from the run that started giving the result |
 | `verifyingSince` | date-time | controller | the start of the settle window: when the incident entered `Verifying`, or was applied again while `Verifying`. Set only while `Verifying` |
 | `resolution.by` | `verify` \| `user`, required | controller | `verify` with `Resolved`, `user` with `Closed` |
 | `resolution.at` | date-time, required | controller | when the incident ended |
@@ -84,6 +86,11 @@ The root-cause analysis, written by the writer:
 | `assumptions[]` | string | what it assumed for lack of it |
 | `error` | string | why the analysis failed |
 | `completedAt` | date-time | when the analysis finished |
+| `reanalysis` | `{at, feedback, count}` | the latest `spec.reanalysis` the writer consumed: when, its feedback, and how many reanalyses the incident has had |
+
+A reanalysis clears every field above, `howToFix`, `lastChecks`,
+`verifyingSince` and the `Reproduced` condition before the new analysis runs:
+they describe the previous one.
 
 ## The Reproduced condition
 

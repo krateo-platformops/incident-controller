@@ -2,7 +2,9 @@ package incident
 
 import (
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +38,33 @@ type result struct {
 	// exit is nil when the run produced no exit code: a timeout, or a pod that never ran.
 	exit *int32
 	at   time.Time
+	// output is what the run printed, or why it gave no exit code.
+	output string
+}
+
+// maxOutput bounds lastChecks output, in bytes.
+const maxOutput = 512
+
+// known reports whether exit is a verdict: 0 the incident is gone, 1 it holds.
+func known(exit *int32) bool {
+	return exit != nil && (*exit == 0 || *exit == 1)
+}
+
+// outputOf is the output kept for a run of exit: the start of out for an unknown result, cut to
+// maxOutput on a UTF-8 boundary, and nothing for a verdict.
+func outputOf(exit *int32, out string) string {
+	if known(exit) {
+		return ""
+	}
+	out = strings.TrimSpace(out)
+	if len(out) <= maxOutput {
+		return out
+	}
+	cut := maxOutput
+	for cut > 0 && !utf8.RuneStart(out[cut]) {
+		cut--
+	}
+	return out[:cut]
 }
 
 // change is a state change worth an event.
@@ -99,10 +128,10 @@ func slot(lc *v1alpha1.LastChecks, s v1alpha1.Script) **v1alpha1.LastCheck {
 	return &lc.Verify
 }
 
-// setLastCheck records a result of s at at. A precondition or verify result equal to the one
-// recorded keeps its since, so a check that keeps giving the same result changes nothing. Every
-// apply run replaces the entry.
-func setLastCheck(inc *v1alpha1.Incident, s v1alpha1.Script, exit *int32, at time.Time) {
+// setLastCheck records a result of s at at, with the output of an unknown precondition or verify
+// result. A precondition or verify result equal to the one recorded keeps its since and output, so
+// a check that keeps giving the same result changes nothing. Every apply run replaces the entry.
+func setLastCheck(inc *v1alpha1.Incident, s v1alpha1.Script, exit *int32, output string, at time.Time) {
 	if inc.Status.LastChecks == nil {
 		inc.Status.LastChecks = &v1alpha1.LastChecks{}
 	}
@@ -110,7 +139,11 @@ func setLastCheck(inc *v1alpha1.Incident, s v1alpha1.Script, exit *int32, at tim
 	if s != v1alpha1.ScriptApply && *p != nil && ptr.Equal((*p).Exit, exit) {
 		return
 	}
-	*p = &v1alpha1.LastCheck{Exit: exit, Since: metav1.NewTime(at).Rfc3339Copy()}
+	c := &v1alpha1.LastCheck{Exit: exit, Since: metav1.NewTime(at).Rfc3339Copy()}
+	if s != v1alpha1.ScriptApply {
+		c.Output = outputOf(exit, output)
+	}
+	*p = c
 }
 
 func clearLastCheck(inc *v1alpha1.Incident, s v1alpha1.Script) {
@@ -186,11 +219,11 @@ func applySpec(inc *v1alpha1.Incident, now time.Time) (changes []change, consume
 	}
 	switch state {
 	case v1alpha1.StateOpen:
-		setLastCheck(inc, v1alpha1.ScriptApply, nil, now)
+		setLastCheck(inc, v1alpha1.ScriptApply, nil, "", now)
 		return []change{setState(inc, v1alpha1.StateVerifying, "spec.applied", now)}, true
 	case v1alpha1.StateVerifying:
 		// A human applied again: record it and restart the settle window.
-		setLastCheck(inc, v1alpha1.ScriptApply, nil, now)
+		setLastCheck(inc, v1alpha1.ScriptApply, nil, "", now)
 		enterVerifying(inc, now)
 		return nil, true
 	}
@@ -202,8 +235,8 @@ func applySpec(inc *v1alpha1.Incident, now time.Time) (changes []change, consume
 // transition. The exit codes: 0 the incident is gone, 1 it holds, anything else or none is
 // unknown and moves nothing. Recording the same result twice changes nothing.
 func record(inc *v1alpha1.Incident, cfg Config, r result, now time.Time) []change {
-	setLastCheck(inc, r.script, r.exit, r.at)
-	if r.exit == nil || (*r.exit != 0 && *r.exit != 1) {
+	setLastCheck(inc, r.script, r.exit, r.output, r.at)
+	if !known(r.exit) {
 		return nil
 	}
 	holds := *r.exit == 1
@@ -252,7 +285,7 @@ func recordApply(inc *v1alpha1.Incident, r result, by string) (changes []change,
 		return nil, false
 	}
 	before := inc.Status.DeepCopy()
-	setLastCheck(inc, v1alpha1.ScriptApply, r.exit, r.at)
+	setLastCheck(inc, v1alpha1.ScriptApply, r.exit, "", r.at)
 	if r.exit != nil && *r.exit == 0 {
 		if state == v1alpha1.StateOpen {
 			changes = append(changes, setState(inc, v1alpha1.StateVerifying, "apply exited 0, run by "+by, r.at))

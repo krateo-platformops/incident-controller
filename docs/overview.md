@@ -19,9 +19,9 @@ or a human closes it.
 
 | Actor | Writes |
 |---|---|
-| alert-provider (the writer) | creates the Incident with its label and `spec`; writes the analysis and `howToFix`; sets `Analyzing`, then `Open` |
+| alert-provider (the writer) | creates the Incident with its label and `spec`; writes the analysis and `howToFix`; sets `Analyzing`, then `Open`; consumes `spec.reanalysis` |
 | incident-controller | runs precondition and verify; writes `lastChecks`, `verifyingSince`, every other state transition, `resolution` and the conditions |
-| a human, through the portal | `spec.applied` ("I applied it", or Apply) and `spec.closed` (Close), with their own token and the `krateo-incident-responder` role; an IncidentApply (Run apply), which has the controller run the apply script with their own rights |
+| a human, through the portal | `spec.applied` ("I applied it", or Apply), `spec.closed` (Close) and `spec.reanalysis` (Re-run analysis), with their own token and the `krateo-incident-responder` role; an IncidentApply (Run apply), which has the controller run the apply script with their own rights |
 
 Field by field: [api](./api.md).
 
@@ -40,6 +40,8 @@ have the details.
 
 ```
 Analyzing ──▶ Open ◀──▶ Verifying ──▶ Resolved
+   ▲           │            │
+   └───────────┴────────────┘ spec.reanalysis
 any state ──spec.closed──▶ Closed
 ```
 
@@ -50,6 +52,7 @@ any state ──spec.closed──▶ Closed
 | `Open` | `Verifying` | precondition exit `0`; `spec.applied`, which the controller consumes: it records an `apply` result and sets `applied` back to `false`; or an IncidentApply run that exits `0` |
 | `Verifying` | `Resolved` | verify exit `0`, at any time |
 | `Verifying` | `Open` | verify exit `1` once the settle window has passed |
+| `Open`, `Verifying` | `Analyzing` | `spec.reanalysis`, which the writer consumes: it clears the analysis and the checks' results and runs the analysis again |
 | any | `Closed` | `spec.closed: true` |
 
 The settle window (5 minutes by default) gives a fix time to take effect. It
