@@ -64,26 +64,14 @@ checks:
   # Deadline of one check run (the pod's activeDeadlineSeconds).
   timeoutSeconds: 60
   serviceAccount: incident-check
-  # Cluster roles the check service account is bound to. view reads the built-in APIs but no
-  # Secrets and no custom resources.
+  # Cluster roles the check service account is bound to, besides incident-controller-check-reader.
+  # view adds pods' logs to what that role reads.
   clusterRoles:
     - view
-  # Krateo API groups the check service account reads (get, list, watch on every resource), through
-  # the incident-controller-check-reader ClusterRole. The Krateo groups a platform serves.
-  readApiGroups:
-    - audit.krateo.io
-    - basic.authn.krateo.io
-    - composition.krateo.io
-    - core.krateo.io
-    - git.krateo.io
-    - ldap.authn.krateo.io
-    - oauth.authn.krateo.io
-    - observability.krateo.io
-    - oidc.authn.krateo.io
-    - review.krateo.io
-    - serviceaccount.authn.krateo.io
-    - templates.krateo.io
-    - widgets.templates.krateo.io
+  # How often the controller rewrites the incident-controller-check-reader ClusterRole from
+  # discovery: get, list and watch on every resource the API server serves except Secrets and
+  # subresources, so a resource installed later becomes readable within this interval.
+  readerRefresh: 5m
   # bash, kubectl and jq. tag defaults to the chart appVersion.
   image:
     repository: ghcr.io/krateo-platformops/incident-controller-check

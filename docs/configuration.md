@@ -77,8 +77,8 @@ pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
 | `checks.createNamespace` | `true` | create it, with `pod-security.kubernetes.io/enforce: restricted` |
 | `checks.timeoutSeconds` | `60` | the check deadline |
 | `checks.serviceAccount` | `incident-check` | the check pods' identity |
-| `checks.clusterRoles` | `[view]` | cluster roles bound to it |
-| `checks.readApiGroups` | the 13 `*.krateo.io` groups kind-krateo serves | groups it reads through `incident-controller-check-reader` |
+| `checks.clusterRoles` | `[view]` | cluster roles bound to it besides `incident-controller-check-reader` |
+| `checks.readerRefresh` | `5m` | how often the controller rewrites `incident-controller-check-reader` from discovery |
 | `checks.image.*` | `ghcr.io/krateo-platformops/incident-controller-check`, appVersion | bash, kubectl and jq |
 | `checks.imagePullSecrets`, `resources`, `podSecurityContext`, `nodeSelector`, `tolerations` | | the check pod template |
 | `checks.networkPolicy.enabled` | `true` | the check NetworkPolicy |
@@ -86,10 +86,16 @@ pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
 
 ## What the check pods can do
 
-- **Read:** `view` (the built-in APIs, no Secrets) plus `get`, `list`, `watch`
-  on every resource of the groups in `checks.readApiGroups`. The schema accepts
-  only dotted group names, so neither `*` nor the core group can be listed,
-  and both would include Secrets. Nothing grants writes.
+- **Read:** `get`, `list`, `watch` on every resource the API server serves,
+  in every group, except Secrets (in any group) and subresources, through
+  `incident-controller-check-reader`; plus `view`, which adds pods' logs. RBAC
+  cannot subtract, and a wildcard would include Secrets, so the controller
+  writes that role's rules from discovery, at start and every
+  `checks.readerRefresh`: a resource installed later becomes readable within
+  that interval. A group discovery cannot read keeps the rules it had.
+  Subresources stay out because they read past the object: a node's, pod's or
+  service's `proxy` reaches endpoints other than the apiserver. Nothing grants
+  writes.
 - **Reach:** the apiserver, by IP, and nothing else; no ingress. kubectl
   finds it from `KUBERNETES_SERVICE_HOST`, so the pods need no DNS, and they
   get none: the controller sets `dnsPolicy: None` with `127.0.0.1` as the only
@@ -114,6 +120,7 @@ pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
 | cluster | `incidentapplies/status` | get, update, patch |
 | cluster | `subjectaccessreviews` | create |
 | cluster | `mutatingadmissionpolicies`, `mutatingadmissionpolicybindings` named `incidentapply-requested-by` | get |
+| cluster | the `clusterroles` named `incident-controller-check-reader` | get, update, escalate (its rules grant reads the controller does not hold) |
 | checks namespace | `pods`, `configmaps` | get, list, watch, create, delete |
 | checks namespace | `pods/log` | get |
 | checks namespace | `secrets` | create |

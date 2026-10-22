@@ -25,6 +25,7 @@ import (
 
 	"github.com/krateo-platformops/incident-controller/apis"
 	"github.com/krateo-platformops/incident-controller/internal/controllers"
+	"github.com/krateo-platformops/incident-controller/internal/controllers/checkreader"
 	"github.com/krateo-platformops/incident-controller/internal/controllers/common/option"
 	"github.com/krateo-platformops/incident-controller/internal/controllers/incident"
 )
@@ -51,6 +52,8 @@ func main() {
 	leaderElection := flag.Bool("leader-election", env.Bool(envKey("LEADER_ELECTION"), false), "Use leader election for the controller manager.")
 	globalReconcileRate := flag.Int("global-reconcile-rate", env.Int(envKey("GLOBAL_RECONCILE_RATE"), 20), "Reconciles per second across all incidents, in bursts of up to ten times that.")
 	timeout := flag.Duration("timeout", env.Duration(envKey("TIMEOUT"), time.Minute), "The timeout for each reconcile.")
+	checkReaderRole := flag.String("check-reader-role", env.String(envKey("CHECK_READER_ROLE"), ""), "ClusterRole of the check pods whose rules grant reads on every resource but Secrets; empty = not managed.")
+	checkReaderRefresh := flag.Duration("check-reader-refresh", env.Duration(envKey("CHECK_READER_REFRESH"), 5*time.Minute), "How often the check reader role is rewritten from discovery.")
 	flag.Parse()
 
 	level := slog.LevelInfo
@@ -78,6 +81,7 @@ func main() {
 		leaderElection:  *leaderElection,
 		checksNamespace: *checksNamespace,
 		podTemplate:     *checkPodTemplate,
+		checkReader:     checkreader.Options{Role: *checkReaderRole, Interval: *checkReaderRefresh, Log: log},
 		incident: incident.Options{
 			Controller: controllerOptions,
 			Checks:     incident.Config{SettleWindow: *settleWindow, CheckTimeout: *checkTimeout},
@@ -101,6 +105,7 @@ type runOptions struct {
 	leaderElection  bool
 	checksNamespace string
 	podTemplate     string
+	checkReader     checkreader.Options
 	incident        incident.Options
 	apply           incident.ApplyOptions
 }
@@ -131,6 +136,7 @@ func run(log logging.Logger, o runOptions) error {
 		"apply-timeout", o.apply.Applies.Timeout.String(),
 		"apply-ttl", o.apply.Applies.TTL.String(),
 		"credentials-namespace", o.apply.Applies.CredentialsNamespace,
+		"check-reader-role", o.checkReader.Role,
 		"leader-election", o.leaderElection)
 
 	cfg, err := ctrl.GetConfig()
@@ -171,6 +177,11 @@ func run(log logging.Logger, o runOptions) error {
 	}
 	if err := controllers.Setup(mgr, o.incident, o.apply); err != nil {
 		return fmt.Errorf("cannot set up controllers: %w", err)
+	}
+	if o.checkReader.Role != "" {
+		if err := checkreader.Setup(mgr, o.checkReader); err != nil {
+			return fmt.Errorf("cannot set up the check reader role: %w", err)
+		}
 	}
 	return mgr.Start(ctrl.SetupSignalHandler())
 }
