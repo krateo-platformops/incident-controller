@@ -35,23 +35,16 @@ subjects:
     name: {{ $.Values.checks.serviceAccount }}
     namespace: {{ $.Values.checks.namespace }}
 {{- end }}
-{{- with .Values.checks.readApiGroups }}
 ---
-# Read access to the Krateo custom resources view does not cover. The groups are listed one by
-# one: a wildcard group would include Secrets.
+# Read access to every resource the API server serves except Secrets and subresources. The
+# controller writes the rules from discovery and keeps them current: RBAC cannot subtract, and a
+# wildcard would include Secrets. The chart sets no rules, so reconciling the release keeps them.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: {{ $name }}-check-reader
   labels:
     {{- include "incident-controller.labels" $ | nindent 4 }}
-rules:
-  - apiGroups:
-      {{- range . }}
-      - {{ . | quote }}
-      {{- end }}
-    resources: ["*"]
-    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -67,7 +60,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ $.Values.checks.serviceAccount }}
     namespace: {{ $.Values.checks.namespace }}
-{{- end }}
 {{- if .Values.checks.networkPolicy.enabled }}
 {{- $np := .Values.checks.networkPolicy }}
 {{- $apiServer := $np.apiServer }}

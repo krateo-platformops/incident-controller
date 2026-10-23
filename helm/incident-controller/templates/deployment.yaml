@@ -46,6 +46,10 @@ spec:
               value: {{ .Values.controller.leaderElection | quote }}
             - name: INCIDENT_CONTROLLER_CHECKS_NAMESPACE
               value: {{ .Values.checks.namespace | quote }}
+            - name: INCIDENT_CONTROLLER_CHECK_READER_ROLE
+              value: {{ printf "%s-check-reader" (include "incident-controller.name" .) | quote }}
+            - name: INCIDENT_CONTROLLER_CHECK_READER_REFRESH
+              value: {{ .Values.checks.readerRefresh | quote }}
             - name: INCIDENT_CONTROLLER_CHECK_TIMEOUT
               value: {{ printf "%ds" (int .Values.checks.timeoutSeconds) | quote }}
             - name: INCIDENT_CONTROLLER_APPLY_TIMEOUT

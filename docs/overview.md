@@ -166,8 +166,9 @@ default), holding only the check pods and their read-only service account:
 - the script from a ConfigMap owned by the pod, run with bash; the image has
   bash, kubectl and jq;
 - the service account `incident-check`, bound to `view` and to
-  `incident-controller-check-reader`, which reads the listed Krateo API groups;
-  no Secrets, no writes;
+  `incident-controller-check-reader`, which reads every resource but Secrets
+  and subresources, its rules kept current from discovery by the controller;
+  no writes;
 - no DNS, and a NetworkPolicy allowing egress to the apiserver only, and no
   ingress;
 - `activeDeadlineSeconds: 60`, and the `restricted` Pod Security Standard.
