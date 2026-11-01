@@ -149,7 +149,9 @@ Run apply also needs `patch` on the incident, which the controller checks, and
 the script can do only what the user's own roles allow.
 
 Neither grants `incidents/status`: only the writer and the controller change
-an incident's status. Neither carries aggregation labels.
+an incident's status. Neither carries aggregation labels. Both carry
+`helm.sh/resource-policy: keep`, so uninstalling the chart leaves them and the
+bindings made to them keep working.
 
 ```sh
 kubectl create clusterrolebinding sre-incident-responder --clusterrole=krateo-incident-responder --group=sre

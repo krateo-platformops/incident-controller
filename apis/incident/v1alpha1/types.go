@@ -404,6 +404,7 @@ type IncidentStatus struct {
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=inc,categories={krateo,observability}
+// +kubebuilder:metadata:annotations="helm.sh/resource-policy=keep"
 type Incident struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

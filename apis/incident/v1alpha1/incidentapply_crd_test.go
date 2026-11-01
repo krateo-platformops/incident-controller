@@ -116,3 +116,7 @@ func TestIncidentApplyConstantsMatchCRD(t *testing.T) {
 		t.Error("output is documented and capped at 4096 bytes")
 	}
 }
+
+func TestIncidentApplyCRDKeptOnUninstall(t *testing.T) {
+	keptOnUninstall(t, applyCRDPath)
+}
