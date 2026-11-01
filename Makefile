@@ -2,10 +2,10 @@
 SHELL := /bin/bash
 
 # Every file `make generate` writes.
-GENERATED := ':(glob)apis/**/zz_generated.*.go' helm/incident-controller-crds/templates
+GENERATED := ':(glob)apis/**/zz_generated.*.go' helm/incident-provider-crds/templates
 
-IMAGE ?= ghcr.io/krateo-platformops/incident-controller
-CHECK_IMAGE ?= ghcr.io/krateo-platformops/incident-controller-check
+IMAGE ?= ghcr.io/krateo-platformops/incident-provider
+CHECK_IMAGE ?= ghcr.io/krateo-platformops/incident-provider-check
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: help
@@ -13,7 +13,7 @@ help: ## print this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: generate
-generate: ## generate deepcopy methodsets and the Incident CRD (into helm/incident-controller-crds)
+generate: ## generate deepcopy methodsets and the Incident CRD (into helm/incident-provider-crds)
 	cd apis && go generate -tags generate ./...
 
 .PHONY: check-generate

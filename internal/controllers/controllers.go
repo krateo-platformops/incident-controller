@@ -4,7 +4,7 @@ package controllers
 import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/krateo-platformops/incident-controller/internal/controllers/incident"
+	"github.com/krateo-platformops/incident-provider/internal/controllers/incident"
 )
 
 // Setup adds every controller to the manager.

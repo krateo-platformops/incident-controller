@@ -1,8 +1,8 @@
 ---
 type: Configuration
-title: incident-controller — configuration
-description: The controller's flags and environment variables, the incident-controller chart values, and the check pod's identity, RBAC and network policy.
-resource: github.com/krateo-platformops/incident-controller
+title: incident-provider — configuration
+description: The controller's flags and environment variables, the incident-provider chart values, and the check pod's identity, RBAC and network policy.
+resource: github.com/krateo-platformops/incident-provider
 tags: [configuration, helm, rbac, networkpolicy]
 timestamp: 2026-09-25T00:00:00Z
 ---
@@ -11,7 +11,7 @@ timestamp: 2026-09-25T00:00:00Z
 
 ## Controller flags
 
-Every flag has an environment variable, `INCIDENT_CONTROLLER_<NAME>`, which
+Every flag has an environment variable, `INCIDENT_PROVIDER_<NAME>`, which
 sets its default. The chart sets them from its values.
 
 | Flag | Environment | Default | Meaning |
@@ -23,11 +23,11 @@ sets its default. The chart sets them from its values.
 | `-apply-timeout` | `APPLY_TIMEOUT` | `2m` | deadline of one IncidentApply run, the apply pod's `activeDeadlineSeconds` |
 | `-apply-ttl` | `APPLY_TTL` | `720h` | how long a finished IncidentApply is kept before the controller deletes it |
 | `-credentials-namespace` | `CREDENTIALS_NAMESPACE` | none, required | namespace of the `<username>-clientconfig` Secrets authn writes at login |
-| `-check-pod-template` | `CHECK_POD_TEMPLATE` | `/etc/incident-controller/check-pod.yaml` | the check pod spec template |
+| `-check-pod-template` | `CHECK_POD_TEMPLATE` | `/etc/incident-provider/check-pod.yaml` | the check pod spec template |
 | `-debug` | `DEBUG` | `false` | debug logging |
 | `-sync` | `SYNC_PERIOD` | `1h` | informer resync period |
 | `-max-reconcile-rate` | `MAX_RECONCILE_RATE` | `5` | concurrent reconciles |
-| `-leader-election` | `LEADER_ELECTION` | `false` | leader election, Lease `incident-controller.observability.krateo.io` |
+| `-leader-election` | `LEADER_ELECTION` | `false` | leader election, Lease `incident-provider.observability.krateo.io` |
 | `-timeout` | `TIMEOUT` | `1m` | timeout of one reconcile |
 | `-global-reconcile-rate` | `GLOBAL_RECONCILE_RATE` | `20` | reconciles per second across all incidents (a token bucket, bursts of 10×); a failed reconcile backs off per incident, 1 s to 60 s |
 
@@ -35,11 +35,11 @@ A pod that has not finished `check-timeout` + 1 minute after its creation, for
 example one never scheduled, counts as a timeout.
 
 The controller serves metrics on `:8080` and `/healthz`, `/readyz` on `:8081`.
-Logs are JSON in the OTel log model, `service.name: incident-controller`.
+Logs are JSON in the OTel log model, `service.name: incident-provider`.
 
 ## The check pod template
 
-The chart renders a pod spec into the ConfigMap `incident-controller-check-pod`,
+The chart renders a pod spec into the ConfigMap `incident-provider-check-pod`,
 which the controller reads at start. It must have one container and a
 `serviceAccountName`. The template supplies the service account, image,
 resources, pod security context, image pull secrets, node selector and
@@ -60,13 +60,13 @@ An apply pod is the same pod with `automountServiceAccountToken: false`, the
 requester's kubeconfig mounted read-only at `/kube` from a Secret owned by the
 pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
 
-## Chart values (`helm/incident-controller`)
+## Chart values (`helm/incident-provider`)
 
 | Value | Default | Meaning |
 |---|---|---|
-| `image.repository`, `image.tag`, `image.pullPolicy` | `ghcr.io/krateo-platformops/incident-controller`, appVersion, `IfNotPresent` | the controller image |
+| `image.repository`, `image.tag`, `image.pullPolicy` | `ghcr.io/krateo-platformops/incident-provider`, appVersion, `IfNotPresent` | the controller image |
 | `imagePullSecrets` | `[]` | for the controller pod |
-| `serviceAccount.create`, `serviceAccount.name` | `true`, `incident-controller` | the controller's service account |
+| `serviceAccount.create`, `serviceAccount.name` | `true`, `incident-provider` | the controller's service account |
 | `controller.pollInterval`, `controller.settleWindow` | `1m`, `5m` | see the flags |
 | `controller.debug`, `syncPeriod`, `maxReconcileRate`, `leaderElection` | `false`, `1h`, `5`, `true` | see the flags |
 | `resources`, `podSecurityContext`, `securityContext` | small, non-root, read-only | the controller pod |
@@ -77,9 +77,9 @@ pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
 | `checks.createNamespace` | `true` | create it, with `pod-security.kubernetes.io/enforce: restricted` |
 | `checks.timeoutSeconds` | `60` | the check deadline |
 | `checks.serviceAccount` | `incident-check` | the check pods' identity |
-| `checks.clusterRoles` | `[view]` | cluster roles bound to it besides `incident-controller-check-reader` |
-| `checks.readerRefresh` | `5m` | how often the controller rewrites `incident-controller-check-reader` from discovery |
-| `checks.image.*` | `ghcr.io/krateo-platformops/incident-controller-check`, appVersion | bash, kubectl and jq |
+| `checks.clusterRoles` | `[view]` | cluster roles bound to it besides `incident-provider-check-reader` |
+| `checks.readerRefresh` | `5m` | how often the controller rewrites `incident-provider-check-reader` from discovery |
+| `checks.image.*` | `ghcr.io/krateo-platformops/incident-provider-check`, appVersion | bash, kubectl and jq |
 | `checks.imagePullSecrets`, `resources`, `podSecurityContext`, `nodeSelector`, `tolerations` | | the check pod template |
 | `checks.networkPolicy.enabled` | `true` | the check NetworkPolicy |
 | `checks.networkPolicy.apiServer` | `[]` | `[{cidr, ports}]`; empty looks the apiserver up at install |
@@ -88,7 +88,7 @@ pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
 
 - **Read:** `get`, `list`, `watch` on every resource the API server serves,
   in every group, except Secrets (in any group) and subresources, through
-  `incident-controller-check-reader`; plus `view`, which adds pods' logs. RBAC
+  `incident-provider-check-reader`; plus `view`, which adds pods' logs. RBAC
   cannot subtract, and a wildcard would include Secrets, so the controller
   writes that role's rules from discovery, at start and every
   `checks.readerRefresh`: a resource installed later becomes readable within
@@ -120,7 +120,7 @@ pod, and `KUBECONFIG=/kube/config`; its deadline is `-apply-timeout`.
 | cluster | `incidentapplies/status` | get, update, patch |
 | cluster | `subjectaccessreviews` | create |
 | cluster | `mutatingadmissionpolicies`, `mutatingadmissionpolicybindings` named `incidentapply-requested-by` | get |
-| cluster | the `clusterroles` named `incident-controller-check-reader` | get, update, escalate (its rules grant reads the controller does not hold) |
+| cluster | the `clusterroles` named `incident-provider-check-reader` | get, update, escalate (its rules grant reads the controller does not hold) |
 | checks namespace | `pods`, `configmaps` | get, list, watch, create, delete |
 | checks namespace | `pods/log` | get |
 | checks namespace | `secrets` | create |

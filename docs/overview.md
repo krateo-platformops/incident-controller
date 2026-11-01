@@ -1,8 +1,8 @@
 ---
 type: Architecture
-title: incident-controller — overview
+title: incident-provider — overview
 description: What an Incident is, its lifecycle, who writes which part of it, and how the controller maps onto provider-runtime.
-resource: github.com/krateo-platformops/incident-controller
+resource: github.com/krateo-platformops/incident-provider
 tags: [crd, incident, observability, provider-runtime, architecture]
 timestamp: 2026-09-25T00:00:00Z
 ---
@@ -20,7 +20,7 @@ or a human closes it.
 | Actor | Writes |
 |---|---|
 | alert-provider (the writer) | creates the Incident with its label and `spec`; writes the analysis and `howToFix`; sets `Analyzing`, then `Open`; consumes `spec.reanalysis` |
-| incident-controller | runs precondition and verify; writes `lastChecks`, `verifyingSince`, every other state transition, `resolution` and the conditions |
+| incident-provider | runs precondition and verify; writes `lastChecks`, `verifyingSince`, every other state transition, `resolution` and the conditions |
 | a human, through the portal | `spec.applied` ("I applied it", or Apply), `spec.closed` (Close) and `spec.reanalysis` (Re-run analysis), with their own token and the `krateo-incident-responder` role; an IncidentApply (Run apply), which has the controller run the apply script with their own rights |
 
 Field by field: [api](./api.md).
@@ -100,7 +100,7 @@ resource: Observe always reports it existing, and decides from the Incident
 whether there is work to do. Check pods only carry the runs, and are where a
 run's result is read.
 
-| provider-runtime | incident-controller |
+| provider-runtime | incident-provider |
 |---|---|
 | `ExternalClient.Observe` | reads the incident's check pods; records a finished one in `status.lastChecks` and applies its transition; applies `spec.closed` and `spec.applied`. A status to persist, a check pod to delete or a check that is due make the Incident out of date. It changes nothing but the Incident held in memory |
 | `Create` | never called |
@@ -166,7 +166,7 @@ default), holding only the check pods and their read-only service account:
 - the script from a ConfigMap owned by the pod, run with bash; the image has
   bash, kubectl and jq;
 - the service account `incident-check`, bound to `view` and to
-  `incident-controller-check-reader`, which reads every resource but Secrets
+  `incident-provider-check-reader`, which reads every resource but Secrets
   and subresources, its rules kept current from discovery by the controller;
   no writes;
 - no DNS, and a NetworkPolicy allowing egress to the apiserver only, and no
@@ -181,8 +181,8 @@ kubectl uses the requester's kubeconfig. Details: [configuration](./configuratio
 | Path | What |
 |---|---|
 | `apis/incident/v1alpha1` | the Go types, the source of truth |
-| `helm/incident-controller-crds` | the CRD chart: the CRDs, generated from the Go types, and the `incidentapply-requested-by` admission policy |
-| `helm/incident-controller` | the controller chart: Deployment, RBAC, the checks namespace, the check pod template, the NetworkPolicy, the unbound `krateo-incident-viewer` and `krateo-incident-responder` roles |
+| `helm/incident-provider-crds` | the CRD chart: the CRDs, generated from the Go types, and the `incidentapply-requested-by` admission policy |
+| `helm/incident-provider` | the controller chart: Deployment, RBAC, the checks namespace, the check pod template, the NetworkPolicy, the unbound `krateo-incident-viewer` and `krateo-incident-responder` roles |
 | `main.go`, `internal/controllers/incident` | the controller: `machine.go` is the state machine, `checkpod.go` the check and apply pods, `incident.go` the Incident's provider-runtime client, `apply.go` the IncidentApply's |
 | `check/Dockerfile` | the check pod image |
 | `examples/incident`, `examples/incidentapply` | a sample Incident and IncidentApply, validated by the unit tests |

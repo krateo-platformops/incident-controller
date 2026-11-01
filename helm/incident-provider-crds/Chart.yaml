@@ -1,12 +1,12 @@
 apiVersion: v2
-name: incident-controller-crds
-description: Krateo PlatformOps incident-controller CRDs (Incident, IncidentApply) and the admission policy that stamps who requested an IncidentApply
+name: incident-provider-crds
+description: Krateo PlatformOps incident-provider CRDs (Incident, IncidentApply) and the admission policy that stamps who requested an IncidentApply
 type: application
 
 # Dedicated CRD chart: the CRD lifecycle stays decoupled from the controller's version bumps
 # (core-provider#89). The CRD in templates/ is generated from apis/ by `make generate`.
 #
-# Versioned with the same release tag as the incident-controller chart: the release pipeline
+# Versioned with the same release tag as the incident-provider chart: the release pipeline
 # substitutes the CHART_VERSION placeholder with the git tag.
 version: CHART_VERSION
 
@@ -19,4 +19,4 @@ keywords:
   - incidents
   - crd
 sources:
-  - https://github.com/krateo-platformops/incident-controller
+  - https://github.com/krateo-platformops/incident-provider

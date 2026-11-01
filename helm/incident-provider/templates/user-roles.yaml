@@ -5,7 +5,7 @@ kind: ClusterRole
 metadata:
   name: krateo-incident-viewer
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["observability.krateo.io"]
     resources: ["incidents", "incidentapplies"]
@@ -18,7 +18,7 @@ kind: ClusterRole
 metadata:
   name: krateo-incident-responder
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["observability.krateo.io"]
     resources: ["incidents"]

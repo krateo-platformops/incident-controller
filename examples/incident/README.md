@@ -2,7 +2,7 @@
 type: Example
 title: incident — a resolved Incident
 description: A sample Incident that its verify script resolved, with every field of the schema that a writer or the controller sets.
-resource: github.com/krateo-platformops/incident-controller
+resource: github.com/krateo-platformops/incident-provider
 tags: [example, incident, crd]
 timestamp: 2026-09-25T00:00:00Z
 ---
@@ -31,7 +31,7 @@ Apply it to a cluster that has the CRD (status is a subresource, so a plain
 apply keeps only `metadata` and `spec`):
 
 ```sh
-kubectl apply -f helm/incident-controller-crds/templates/
+kubectl apply -f helm/incident-provider-crds/templates/
 kubectl apply -f examples/incident/incident.yaml
 kubectl get incidents -n krateo-system
 ```

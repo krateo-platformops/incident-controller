@@ -1,16 +1,16 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "incident-controller.name" -}}
+{{- define "incident-provider.name" -}}
 {{- .Chart.Name | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "incident-controller.labels" -}}
+{{- define "incident-provider.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-app.kubernetes.io/name: {{ include "incident-controller.name" . }}
+app.kubernetes.io/name: {{ include "incident-provider.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
@@ -19,27 +19,27 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "incident-controller.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "incident-controller.name" . }}
+{{- define "incident-provider.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "incident-provider.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Service account name
 */}}
-{{- define "incident-controller.credentialsNamespace" -}}
+{{- define "incident-provider.credentialsNamespace" -}}
 {{- default .Release.Namespace .Values.apply.credentialsNamespace }}
 {{- end }}
 
-{{- define "incident-controller.serviceAccountName" -}}
-{{- default "incident-controller" .Values.serviceAccount.name }}
+{{- define "incident-provider.serviceAccountName" -}}
+{{- default "incident-provider" .Values.serviceAccount.name }}
 {{- end }}
 
 {{/*
 The check pod spec template the controller loads. The controller adds the script, the command
 and the sandbox settings.
 */}}
-{{- define "incident-controller.checkPod" -}}
+{{- define "incident-provider.checkPod" -}}
 serviceAccountName: {{ .Values.checks.serviceAccount }}
 terminationGracePeriodSeconds: 5
 securityContext:

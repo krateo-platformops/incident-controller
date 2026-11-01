@@ -1,11 +1,11 @@
-{{- $name := include "incident-controller.name" . }}
+{{- $name := include "incident-provider.name" . }}
 {{- if .Values.checks.createNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Values.checks.namespace }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
 ---
@@ -17,7 +17,7 @@ metadata:
   name: {{ .Values.checks.serviceAccount }}
   namespace: {{ .Values.checks.namespace }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 {{- range .Values.checks.clusterRoles }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -25,7 +25,7 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ $name }}-check-{{ . }}
   labels:
-    {{- include "incident-controller.labels" $ | nindent 4 }}
+    {{- include "incident-provider.labels" $ | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -44,14 +44,14 @@ kind: ClusterRole
 metadata:
   name: {{ $name }}-check-reader
   labels:
-    {{- include "incident-controller.labels" $ | nindent 4 }}
+    {{- include "incident-provider.labels" $ | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ $name }}-check-reader
   labels:
-    {{- include "incident-controller.labels" $ | nindent 4 }}
+    {{- include "incident-provider.labels" $ | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -90,7 +90,7 @@ metadata:
   name: {{ $name }}-checks
   namespace: {{ .Values.checks.namespace }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 spec:
   podSelector:
     matchLabels:

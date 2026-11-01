@@ -1,9 +1,11 @@
-# incident-controller
+# incident-provider
 
-Krateo incident controller: the `Incident` custom resource
+Krateo incident provider: the `Incident` custom resource
 (`incidents.observability.krateo.io`) and the controller, built on
 [provider-runtime](https://github.com/krateo-platformops/provider-runtime),
 that runs each incident's checks and moves it through its lifecycle.
+
+Formerly incident-controller; renamed on 2026-11-01 (see [log](docs/log.md)).
 
 ## What is this
 
@@ -21,13 +23,13 @@ controller, its chart, and the check pod image.
 ## Install
 
 Two charts, versioned from the git tag at release and published to
-`oci://ghcr.io/krateo-platformops/charts`: `incident-controller-crds` (the
+`oci://ghcr.io/krateo-platformops/charts`: `incident-provider-crds` (the
 CRDs and the admission policy that stamps who created an IncidentApply, which
-needs Kubernetes 1.36) and `incident-controller` (the controller). Install the CRD chart first:
+needs Kubernetes 1.36) and `incident-provider` (the controller). Install the CRD chart first:
 
 ```sh
-helm install incident-controller-crds oci://ghcr.io/krateo-platformops/charts/incident-controller-crds --version <tag>
-helm install incident-controller oci://ghcr.io/krateo-platformops/charts/incident-controller --version <tag> -n krateo-system
+helm install incident-provider-crds oci://ghcr.io/krateo-platformops/charts/incident-provider-crds --version <tag>
+helm install incident-provider oci://ghcr.io/krateo-platformops/charts/incident-provider --version <tag> -n krateo-system
 ```
 
 ## Configure
@@ -54,7 +56,7 @@ check pods' RBAC and network policy: [configuration](docs/configuration.md).
 ## Develop & release
 
 ```sh
-make generate        # deepcopy + the CRD, from apis/ into helm/incident-controller-crds/templates
+make generate        # deepcopy + the CRD, from apis/ into helm/incident-provider-crds/templates
 make check-generate  # fail if the committed generated files are stale
 make build lint test
 make lint-charts     # helm lint and render both charts

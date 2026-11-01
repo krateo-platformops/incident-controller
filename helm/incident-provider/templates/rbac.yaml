@@ -4,9 +4,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "incident-controller.name" . }}
+  name: {{ include "incident-provider.name" . }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   # Finalizer, create-handshake annotations, and consuming spec.applied.
   - apiGroups: ["observability.krateo.io"]
@@ -38,31 +38,31 @@ rules:
   # the controller does not hold itself.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
-    resourceNames: [{{ printf "%s-check-reader" (include "incident-controller.name" .) | quote }}]
+    resourceNames: [{{ printf "%s-check-reader" (include "incident-provider.name" .) | quote }}]
     verbs: ["get", "update", "escalate"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "incident-controller.name" . }}
+  name: {{ include "incident-provider.name" . }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "incident-controller.name" . }}
+  name: {{ include "incident-provider.name" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "incident-controller.serviceAccountName" . }}
+    name: {{ include "incident-provider.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "incident-controller.name" . }}-checks
+  name: {{ include "incident-provider.name" . }}-checks
   namespace: {{ .Values.checks.namespace }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: ["pods", "configmaps"]
@@ -78,17 +78,17 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "incident-controller.name" . }}-checks
+  name: {{ include "incident-provider.name" . }}-checks
   namespace: {{ .Values.checks.namespace }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "incident-controller.name" . }}-checks
+  name: {{ include "incident-provider.name" . }}-checks
 subjects:
   - kind: ServiceAccount
-    name: {{ include "incident-controller.serviceAccountName" . }}
+    name: {{ include "incident-provider.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 # The <username>-clientconfig Secrets authn writes at login: the client certificate an apply script
@@ -96,10 +96,10 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "incident-controller.name" . }}-credentials
-  namespace: {{ include "incident-controller.credentialsNamespace" . }}
+  name: {{ include "incident-provider.name" . }}-credentials
+  namespace: {{ include "incident-provider.credentialsNamespace" . }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -108,27 +108,27 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "incident-controller.name" . }}-credentials
-  namespace: {{ include "incident-controller.credentialsNamespace" . }}
+  name: {{ include "incident-provider.name" . }}-credentials
+  namespace: {{ include "incident-provider.credentialsNamespace" . }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "incident-controller.name" . }}-credentials
+  name: {{ include "incident-provider.name" . }}-credentials
 subjects:
   - kind: ServiceAccount
-    name: {{ include "incident-controller.serviceAccountName" . }}
+    name: {{ include "incident-provider.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- if .Values.controller.leaderElection }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "incident-controller.name" . }}-leader-election
+  name: {{ include "incident-provider.name" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
@@ -137,16 +137,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "incident-controller.name" . }}-leader-election
+  name: {{ include "incident-provider.name" . }}-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "incident-controller.name" . }}-leader-election
+  name: {{ include "incident-provider.name" . }}-leader-election
 subjects:
   - kind: ServiceAccount
-    name: {{ include "incident-controller.serviceAccountName" . }}
+    name: {{ include "incident-provider.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}

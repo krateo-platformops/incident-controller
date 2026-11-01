@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
 
 const (
-	applyCRDPath     = "../../../helm/incident-controller-crds/templates/observability.krateo.io_incidentapplies.yaml"
+	applyCRDPath     = "../../../helm/incident-provider-crds/templates/observability.krateo.io_incidentapplies.yaml"
 	applyExamplePath = "../../../examples/incidentapply/incidentapply.yaml"
 )
 

@@ -19,11 +19,11 @@ import (
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 	"sigs.k8s.io/yaml"
 
-	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
 
 const (
-	crdPath     = "../../../helm/incident-controller-crds/templates/observability.krateo.io_incidents.yaml"
+	crdPath     = "../../../helm/incident-provider-crds/templates/observability.krateo.io_incidents.yaml"
 	examplePath = "../../../examples/incident/incident.yaml"
 )
 

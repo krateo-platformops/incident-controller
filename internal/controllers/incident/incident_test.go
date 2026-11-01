@@ -24,14 +24,14 @@ import (
 	"github.com/krateo-platformops/provider-runtime/pkg/reconciler"
 	"github.com/krateo-platformops/provider-runtime/pkg/test"
 
-	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
 
 const checksNamespace = "krateo-incident-checks"
 
 var template = corev1.PodSpec{
 	ServiceAccountName: "incident-check",
-	Containers:         []corev1.Container{{Name: "check", Image: "ghcr.io/krateo-platformops/incident-controller-check:0.1.0"}},
+	Containers:         []corev1.Container{{Name: "check", Image: "ghcr.io/krateo-platformops/incident-provider-check:0.1.0"}},
 }
 
 var pods = CheckPods{Namespace: checksNamespace, Template: template, Timeout: time.Minute}

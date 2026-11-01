@@ -40,8 +40,8 @@ import (
 	"github.com/krateo-platformops/provider-runtime/pkg/reconciler"
 	"github.com/krateo-platformops/provider-runtime/pkg/resource"
 
-	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
-	"github.com/krateo-platformops/incident-controller/internal/controllers/common/option"
+	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
+	"github.com/krateo-platformops/incident-provider/internal/controllers/common/option"
 )
 
 var errNotIncidentApply = errors.New("managed resource is not an IncidentApply")

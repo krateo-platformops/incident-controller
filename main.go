@@ -1,4 +1,4 @@
-// Command incident-controller runs the checks of every Incident and moves it through its
+// Command incident-provider runs the checks of every Incident and moves it through its
 // lifecycle, and runs each IncidentApply's apply script as the user who created it.
 package main
 
@@ -23,16 +23,16 @@ import (
 	"github.com/krateo-platformops/provider-runtime/pkg/logging"
 	"github.com/krateo-platformops/provider-runtime/pkg/ratelimiter"
 
-	"github.com/krateo-platformops/incident-controller/apis"
-	"github.com/krateo-platformops/incident-controller/internal/controllers"
-	"github.com/krateo-platformops/incident-controller/internal/controllers/checkreader"
-	"github.com/krateo-platformops/incident-controller/internal/controllers/common/option"
-	"github.com/krateo-platformops/incident-controller/internal/controllers/incident"
+	"github.com/krateo-platformops/incident-provider/apis"
+	"github.com/krateo-platformops/incident-provider/internal/controllers"
+	"github.com/krateo-platformops/incident-provider/internal/controllers/checkreader"
+	"github.com/krateo-platformops/incident-provider/internal/controllers/common/option"
+	"github.com/krateo-platformops/incident-provider/internal/controllers/incident"
 )
 
 const (
-	serviceName  = "incident-controller"
-	envVarPrefix = "INCIDENT_CONTROLLER"
+	serviceName  = "incident-provider"
+	envVarPrefix = "INCIDENT_PROVIDER"
 )
 
 func envKey(name string) string { return envVarPrefix + "_" + name }
@@ -47,7 +47,7 @@ func main() {
 	applyTimeout := flag.Duration("apply-timeout", env.Duration(envKey("APPLY_TIMEOUT"), 2*time.Minute), "Deadline of one IncidentApply run: the apply pod's activeDeadlineSeconds.")
 	applyTTL := flag.Duration("apply-ttl", env.Duration(envKey("APPLY_TTL"), 30*24*time.Hour), "How long a finished IncidentApply is kept before it is deleted.")
 	credentialsNamespace := flag.String("credentials-namespace", env.String(envKey("CREDENTIALS_NAMESPACE"), ""), "Namespace of the <username>-clientconfig Secrets authn writes at login.")
-	checkPodTemplate := flag.String("check-pod-template", env.String(envKey("CHECK_POD_TEMPLATE"), "/etc/incident-controller/check-pod.yaml"), "File holding the check pod spec template.")
+	checkPodTemplate := flag.String("check-pod-template", env.String(envKey("CHECK_POD_TEMPLATE"), "/etc/incident-provider/check-pod.yaml"), "File holding the check pod spec template.")
 	maxReconcileRate := flag.Int("max-reconcile-rate", env.Int(envKey("MAX_RECONCILE_RATE"), 5), "The number of concurrent reconciles.")
 	leaderElection := flag.Bool("leader-election", env.Bool(envKey("LEADER_ELECTION"), false), "Use leader election for the controller manager.")
 	globalReconcileRate := flag.Int("global-reconcile-rate", env.Int(envKey("GLOBAL_RECONCILE_RATE"), 20), "Reconciles per second across all incidents, in bursts of up to ten times that.")
@@ -95,7 +95,7 @@ func main() {
 			},
 		},
 	}); err != nil {
-		log.Error(err, "incident-controller stopped")
+		log.Error(err, "incident-provider stopped")
 		os.Exit(1)
 	}
 }
@@ -128,7 +128,7 @@ func run(log logging.Logger, o runOptions) error {
 	}
 	o.apply.Pods = o.incident.Pods
 
-	log.Info("Starting incident-controller",
+	log.Info("Starting incident-provider",
 		"poll-interval", o.incident.Controller.PollInterval.String(),
 		"settle-window", o.incident.Checks.SettleWindow.String(),
 		"check-timeout", o.incident.Checks.CheckTimeout.String(),
@@ -152,7 +152,7 @@ func run(log logging.Logger, o runOptions) error {
 	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		LeaderElection:   o.leaderElection,
-		LeaderElectionID: "incident-controller.observability.krateo.io",
+		LeaderElectionID: "incident-provider.observability.krateo.io",
 		Cache: cache.Options{
 			SyncPeriod: &o.syncPeriod,
 			ByObject: map[client.Object]cache.ByObject{

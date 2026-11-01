@@ -2,7 +2,7 @@
 type: Example
 title: incidentapply — one Run apply click
 description: A sample IncidentApply whose run, as the user who created it, exited 0.
-resource: github.com/krateo-platformops/incident-controller
+resource: github.com/krateo-platformops/incident-provider
 tags: [example, incidentapply, crd]
 timestamp: 2026-10-05T00:00:00Z
 ---
@@ -16,7 +16,7 @@ Incident in [`../incident`](../incident):
    naming only the incident.
 2. The `incidentapply-requested-by` admission policy wrote `spec.requestedBy` from the user the
    apiserver authenticated.
-3. incident-controller checked the incident was Open with an apply script, that alice may patch
+3. incident-provider checked the incident was Open with an apply script, that alice may patch
    it, and that her login outlasts the run. It ran the script in a check pod with alice's own
    client certificate.
 4. The script exited `0`: the run is `Succeeded`, the incident got an `apply` check with exit `0`
