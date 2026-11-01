@@ -15,7 +15,7 @@ notes live in GitHub Releases. Entries record what was true when written.
 ## 2026-11-01 — renamed from incident-controller (unreleased)
 
 The component is now incident-provider, the name the other Krateo providers
-use. Releases up to 0.5.1 were published as incident-controller.
+use. Releases up to 0.5.2 were published as incident-controller.
 
 Renamed:
 - Go module `github.com/krateo-platformops/incident-controller` →
@@ -56,6 +56,8 @@ Kept, deliberately:
   `Incident` and `IncidentApply`. The generated CRDs are byte-identical to
   before; only their directory moved. Clusters hold live Incidents (633 across
   two clusters on 2026-11-01), and deleting a CRD deletes every object of it.
+  Both CRDs and both user ClusterRoles still carry `helm.sh/resource-policy: keep`
+  (since 0.5.2) in their new location.
 - The CRD side's installer identity (composition `incident-controller-crd`,
   kind `IncidentControllerCrds`) is outside this repo. Installer keeps it so
   the CRD release is upgraded in place to the renamed chart, never
@@ -66,4 +68,4 @@ Kept, deliberately:
   name.
 - Label and annotation keys under `observability.krateo.io/`, the component
   label `incident-check`, and the admission policy `incidentapply-requested-by`.
-- Past release notes and tags (0.2.0 … 0.5.1) as published.
+- Past release notes and tags (0.2.0 … 0.5.2) as published.
