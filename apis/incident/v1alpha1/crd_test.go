@@ -401,3 +401,18 @@ func TestConstantsMatchCRD(t *testing.T) {
 		t.Errorf("status.lastChecks keys differ from the Script constants (-want +got):\n%s", d)
 	}
 }
+
+// keptOnUninstall fails unless the CRD at path tells Helm to leave it on uninstall: deleting a CRD
+// deletes every object of its kind.
+func keptOnUninstall(t *testing.T, path string) {
+	t.Helper()
+	var crd apiextensionsv1.CustomResourceDefinition
+	readYAML(t, path, &crd)
+	if got := crd.Annotations["helm.sh/resource-policy"]; got != "keep" {
+		t.Errorf("%s: annotation helm.sh/resource-policy = %q, want %q", crd.Name, got, "keep")
+	}
+}
+
+func TestIncidentCRDKeptOnUninstall(t *testing.T) {
+	keptOnUninstall(t, crdPath)
+}
