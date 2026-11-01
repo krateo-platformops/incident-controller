@@ -69,3 +69,11 @@ Kept, deliberately:
 - Label and annotation keys under `observability.krateo.io/`, the component
   label `incident-check`, and the admission policy `incidentapply-requested-by`.
 - Past release notes and tags (0.2.0 … 0.5.2) as published.
+
+Corrected: the 0.5.2 README said that deleting a Krateo composition that
+installed the CRD chart still deleted the CRDs, because core-provider deleted
+every release object with finalizers before uninstalling. It doesn't:
+core-provider's teardown reads each object and skips it when it has no
+finalizers, and the installed CRDs have none at rest. So keep protects the
+CRDs and the user ClusterRoles on composition deletion as well as on
+`helm uninstall`.
