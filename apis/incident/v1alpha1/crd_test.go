@@ -1,8 +1,11 @@
 package v1alpha1_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -14,8 +17,10 @@ import (
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 	"sigs.k8s.io/yaml"
 
@@ -25,6 +30,8 @@ import (
 const (
 	crdPath     = "../../../helm/incident-provider-crds/templates/observability.krateo.io_incidents.yaml"
 	examplePath = "../../../examples/incident/incident.yaml"
+
+	requesterPolicyPath = "../../../helm/incident-provider-crds/templates/incidentapply-requested-by.yaml"
 )
 
 func readYAML(t *testing.T, path string, out any) {
@@ -415,4 +422,46 @@ func keptOnUninstall(t *testing.T, path string) {
 
 func TestIncidentCRDKeptOnUninstall(t *testing.T) {
 	keptOnUninstall(t, crdPath)
+}
+
+// TestRequesterPolicyKeptOnUninstall: a recreated policy or binding is newer than every
+// IncidentApply already in the cluster, and the controller refuses those requests, since nothing
+// vouched for their spec.requestedBy. The template holds no Helm directives, so it is parsed as is.
+func TestRequesterPolicyKeptOnUninstall(t *testing.T) {
+	f, err := os.Open(requesterPolicyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	got := map[string]bool{}
+	r := utilyaml.NewYAMLReader(bufio.NewReader(f))
+	for {
+		doc, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var obj metav1.PartialObjectMetadata
+		if err := yaml.Unmarshal(doc, &obj); err != nil {
+			t.Fatal(err)
+		}
+		if obj.Kind == "" {
+			continue // a document of comments only
+		}
+		id := obj.Kind + " " + obj.Name
+		got[id] = true
+		if p := obj.Annotations["helm.sh/resource-policy"]; p != "keep" {
+			t.Errorf("%s: annotation helm.sh/resource-policy = %q, want %q", id, p, "keep")
+		}
+	}
+	want := map[string]bool{
+		"MutatingAdmissionPolicy " + v1alpha1.RequesterPolicy:        true,
+		"MutatingAdmissionPolicyBinding " + v1alpha1.RequesterPolicy: true,
+	}
+	if d := cmp.Diff(want, got); d != "" {
+		t.Errorf("objects in %s (-want +got):\n%s", requesterPolicyPath, d)
+	}
 }

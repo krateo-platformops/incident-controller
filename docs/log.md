@@ -4,13 +4,22 @@ title: incident-provider — log
 description: Curated chronological history of incident-provider — notable changes and decisions, newest first.
 resource: github.com/krateo-platformops/incident-provider
 tags: [controller, history]
-timestamp: 2026-11-01T00:00:00Z
+timestamp: 2026-11-03T00:00:00Z
 ---
 
 # Log
 
 Curated history — notable changes and decisions, newest first. Full release
 notes live in GitHub Releases. Entries record what was true when written.
+
+## 2026-11-03 — 0.6.1: keep the requested-by admission policy
+
+The CRD chart's MutatingAdmissionPolicy `incidentapply-requested-by` and its
+binding now carry `helm.sh/resource-policy: keep`, like the two CRDs. Without
+it, uninstalling the CRD chart, or swapping it for another chart, deleted them
+with no ownership check. Recreated, they are newer than every IncidentApply
+already in the cluster, and the controller's `vouched` check refuses each of
+those requests. The 0.5.x line gets the same change.
 
 ## 2026-11-01 — renamed from incident-controller (unreleased)
 
