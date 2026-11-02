@@ -1,8 +1,15 @@
 package v1alpha1_test
 
 import (
+	"bytes"
+	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
 )
@@ -10,6 +17,7 @@ import (
 const (
 	applyCRDPath     = "../../../helm/incident-controller-crds/templates/observability.krateo.io_incidentapplies.yaml"
 	applyExamplePath = "../../../examples/incidentapply/incidentapply.yaml"
+	policyPath       = "../../../helm/incident-controller-crds/templates/incidentapply-requested-by.yaml"
 )
 
 func applyExample(t *testing.T) map[string]any {
@@ -119,4 +127,35 @@ func TestIncidentApplyConstantsMatchCRD(t *testing.T) {
 
 func TestIncidentApplyCRDKeptOnUninstall(t *testing.T) {
 	keptOnUninstall(t, applyCRDPath)
+}
+
+// TestRequesterPolicyKeptOnUninstall: the controller refuses every IncidentApply created before the
+// policy or its binding, so Helm must not delete and recreate them on uninstall.
+func TestRequesterPolicyKeptOnUninstall(t *testing.T) {
+	b, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	dec := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(b), 4096)
+	for {
+		var obj metav1.PartialObjectMetadata
+		if err := dec.Decode(&obj); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		seen[obj.Kind] = true
+		if obj.Name != v1alpha1.RequesterPolicy {
+			t.Errorf("%s: name = %q, want %q", obj.Kind, obj.Name, v1alpha1.RequesterPolicy)
+		}
+		if got := obj.Annotations["helm.sh/resource-policy"]; got != "keep" {
+			t.Errorf("%s %s: annotation helm.sh/resource-policy = %q, want %q", obj.Kind, obj.Name, got, "keep")
+		}
+	}
+	for _, k := range []string{"MutatingAdmissionPolicy", "MutatingAdmissionPolicyBinding"} {
+		if !seen[k] {
+			t.Errorf("%s: no %s", policyPath, k)
+		}
+	}
 }
