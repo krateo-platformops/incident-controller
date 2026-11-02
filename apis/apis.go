@@ -1,10 +1,10 @@
-// Package apis contains the Kubernetes API groups of the incident controller.
+// Package apis contains the Kubernetes API groups of incident-provider.
 package apis
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
 
-	incidentv1alpha1 "github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+	incidentv1alpha1 "github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
 
 func init() {

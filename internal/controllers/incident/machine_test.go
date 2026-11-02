@@ -12,7 +12,7 @@ import (
 	prv1 "github.com/krateo-platformops/provider-runtime/apis/common/v1"
 	"github.com/krateo-platformops/provider-runtime/pkg/test"
 
-	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
 
 var (

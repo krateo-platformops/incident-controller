@@ -1,6 +1,6 @@
 # The controller image. tag defaults to the chart appVersion (the release tag).
 image:
-  repository: ghcr.io/krateo-platformops/incident-controller
+  repository: ghcr.io/krateo-platformops/incident-provider
   tag: ""
   pullPolicy: IfNotPresent
 
@@ -8,7 +8,7 @@ imagePullSecrets: []
 
 serviceAccount:
   create: true
-  name: incident-controller
+  name: incident-provider
 
 controller:
   debug: false
@@ -64,17 +64,17 @@ checks:
   # Deadline of one check run (the pod's activeDeadlineSeconds).
   timeoutSeconds: 60
   serviceAccount: incident-check
-  # Cluster roles the check service account is bound to, besides incident-controller-check-reader.
+  # Cluster roles the check service account is bound to, besides incident-provider-check-reader.
   # view adds pods' logs to what that role reads.
   clusterRoles:
     - view
-  # How often the controller rewrites the incident-controller-check-reader ClusterRole from
+  # How often the controller rewrites the incident-provider-check-reader ClusterRole from
   # discovery: get, list and watch on every resource the API server serves except Secrets and
   # subresources, so a resource installed later becomes readable within this interval.
   readerRefresh: 5m
   # bash, kubectl and jq. tag defaults to the chart appVersion.
   image:
-    repository: ghcr.io/krateo-platformops/incident-controller-check
+    repository: ghcr.io/krateo-platformops/incident-provider-check
     tag: ""
     pullPolicy: IfNotPresent
   imagePullSecrets: []

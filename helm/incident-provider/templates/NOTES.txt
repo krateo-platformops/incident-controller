@@ -1,4 +1,4 @@
-incident-controller runs Incident checks in namespace {{ .Values.checks.namespace }}.
+incident-provider runs Incident checks in namespace {{ .Values.checks.namespace }}.
 {{- if and .Values.checks.networkPolicy.enabled (not .Values.checks.networkPolicy.apiServer) (not (lookup "v1" "Service" "default" "kubernetes")) }}
 
 WARNING: the apiserver address could not be looked up, so the check NetworkPolicy allows no egress

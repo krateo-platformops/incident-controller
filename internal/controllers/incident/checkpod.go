@@ -12,7 +12,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
-	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
 
 // Labels and annotations on check pods and their ConfigMaps.
@@ -21,7 +21,7 @@ const (
 	LabelManagedBy = "app.kubernetes.io/managed-by"
 	// ComponentCheck marks check pods; the chart's NetworkPolicy selects it.
 	ComponentCheck = "incident-check"
-	managedBy      = "incident-controller"
+	managedBy      = "incident-provider"
 
 	labelIncidentUID = "observability.krateo.io/incident-uid"
 	labelScript      = "observability.krateo.io/check-script"

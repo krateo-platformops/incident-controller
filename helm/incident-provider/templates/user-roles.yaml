@@ -7,7 +7,7 @@ metadata:
   annotations:
     helm.sh/resource-policy: keep
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["observability.krateo.io"]
     resources: ["incidents", "incidentapplies"]
@@ -22,7 +22,7 @@ metadata:
   annotations:
     helm.sh/resource-policy: keep
   labels:
-    {{- include "incident-controller.labels" . | nindent 4 }}
+    {{- include "incident-provider.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["observability.krateo.io"]
     resources: ["incidents"]

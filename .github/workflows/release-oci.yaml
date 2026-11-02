@@ -1,4 +1,4 @@
-# Publishes both charts (incident-controller-crds, incident-controller) on a release tag, through the
+# Publishes both charts (incident-provider-crds, incident-provider) on a release tag, through the
 # org reusable. It substitutes CHART_VERSION from the tag and waits for every image the charts
 # reference, including the check image in the check pod template ConfigMap.
 name: release-oci

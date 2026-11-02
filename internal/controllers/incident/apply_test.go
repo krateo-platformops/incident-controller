@@ -33,7 +33,7 @@ import (
 	"github.com/krateo-platformops/plumbing/kubeutil/event"
 	"github.com/krateo-platformops/provider-runtime/pkg/logging"
 
-	"github.com/krateo-platformops/incident-controller/apis/incident/v1alpha1"
+	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
 
 const credentialsNamespace = "krateo-system"

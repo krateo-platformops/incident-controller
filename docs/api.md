@@ -1,8 +1,8 @@
 ---
 type: API
-title: incident-controller — api
+title: incident-provider — api
 description: The Incident and IncidentApply custom resources (observability.krateo.io/v1alpha1) field by field, who writes each field, and the rules the apiserver enforces.
-resource: github.com/krateo-platformops/incident-controller
+resource: github.com/krateo-platformops/incident-provider
 tags: [crd, incident, observability, api]
 timestamp: 2026-09-25T00:00:00Z
 ---
@@ -15,7 +15,7 @@ and `observability`, namespaced, with a status subresource.
 
 The Go types in [`apis/incident/v1alpha1`](../apis/incident/v1alpha1/types.go)
 are the source of truth. `make generate` writes the CRD from them into
-[`helm/incident-controller-crds/templates/`](../helm/incident-controller-crds/templates/observability.krateo.io_incidents.yaml).
+[`helm/incident-provider-crds/templates/`](../helm/incident-provider-crds/templates/observability.krateo.io_incidents.yaml).
 A sample with every field is [`examples/incident`](../examples/incident/README.md).
 
 ## Identity

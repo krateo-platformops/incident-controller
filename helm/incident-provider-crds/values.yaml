@@ -1,0 +1,2 @@
+# Default values for incident-provider-crds (the dedicated CRD chart).
+# The CRD is static; there are no tunable values.

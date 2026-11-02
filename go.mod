@@ -1,4 +1,4 @@
-module github.com/krateo-platformops/incident-controller
+module github.com/krateo-platformops/incident-provider
 
 go 1.26.0
 

@@ -13,5 +13,5 @@ jobs:
       contents: read
       packages: write
     with:
-      modules: '[{"mod":"incident-controller","context":"."},{"mod":"incident-controller-check","context":"check"}]'
+      modules: '[{"mod":"incident-provider","context":"."},{"mod":"incident-provider-check","context":"check"}]'
       push: false

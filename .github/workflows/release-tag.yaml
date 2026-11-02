@@ -1,6 +1,6 @@
 # Builds and pushes both images on a release tag, through the org reusable: the controller
-# (ghcr.io/<owner>/incident-controller) and the check pod image
-# (ghcr.io/<owner>/incident-controller-check). The chart references both at its appVersion, the tag.
+# (ghcr.io/<owner>/incident-provider) and the check pod image
+# (ghcr.io/<owner>/incident-provider-check). The chart references both at its appVersion, the tag.
 name: release-tag
 
 on:
@@ -14,4 +14,4 @@ jobs:
       contents: read
       packages: write
     with:
-      modules: '[{"mod":"incident-controller","context":"."},{"mod":"incident-controller-check","context":"check"}]'
+      modules: '[{"mod":"incident-provider","context":"."},{"mod":"incident-provider-check","context":"check"}]'
