@@ -30,10 +30,12 @@ helm install incident-controller-crds oci://ghcr.io/krateo-platformops/charts/in
 helm install incident-controller oci://ghcr.io/krateo-platformops/charts/incident-controller --version <tag> -n krateo-system
 ```
 
-`helm uninstall` leaves the two CRDs and the two user ClusterRoles in place
-(`helm.sh/resource-policy: keep`): deleting a CRD deletes every Incident or
-IncidentApply, and deleting a role leaves the bindings made to it dangling.
-Delete them by hand to remove them. Deleting a Krateo composition that
+`helm uninstall` leaves the two CRDs, the requested-by admission policy and its
+binding, and the two user ClusterRoles in place (`helm.sh/resource-policy:
+keep`): deleting a CRD deletes every Incident or IncidentApply, the controller
+refuses every IncidentApply created before a recreated policy or binding, and
+deleting a role leaves the bindings made to it dangling. Delete them by hand to
+remove them. Deleting a Krateo composition that
 installed the CRD chart still deletes the CRDs: before it uninstalls,
 core-provider deletes every release object that has finalizers, and a CRD has
 one, without reading `helm.sh/resource-policy`. The roles have none and stay.
