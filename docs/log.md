@@ -4,13 +4,33 @@ title: incident-provider — log
 description: Curated chronological history of incident-provider — notable changes and decisions, newest first.
 resource: github.com/krateo-platformops/incident-provider
 tags: [controller, history]
-timestamp: 2026-11-03T00:00:00Z
+timestamp: 2026-11-04T00:00:00Z
 ---
 
 # Log
 
 Curated history — notable changes and decisions, newest first. Full release
 notes live in GitHub Releases. Entries record what was true when written.
+
+## 2026-11-04 — provider-runtime v1.8.2: the Ready contract (unreleased)
+
+provider-runtime v1.8.0 (taken at v1.8.2) sets `Ready` to
+`Unknown/NotObserved` when Connect or Observe fails, and expects every
+Observe that succeeds to set `Ready` again; one that doesn't gets a
+`ReadyNotSetAfterObserve` Warning. On a resource being deleted the runtime
+answers `Ready=Deleting` itself: after a successful Observe since v1.8.1, and
+after a failed one since v1.8.2. Both controllers already set `Available` on
+their main paths. Changed:
+- The deletion paths of both Observes set `Deleting`. The runtime doesn't
+  require it there; it keeps every successful Observe answering `Ready`.
+- The IncidentApply's errors after it set `Available` (reading the run's
+  ConfigMap, admission's reads) are wrapped with `reconciler.ReadyAssessed`,
+  so the runtime keeps `Available` next to the error.
+- The example precondition treats only `Ready=True` as gone. It held only
+  on `Ready=False`, so a `NotObserved` CompositionDefinition read as fixed.
+
+Not to be released before core-provider 2.13.56, whose rollup maps
+`NotObserved` (core-provider#310), is live on the target cluster.
 
 ## 2026-11-03 — 0.6.1: keep the requested-by admission policy
 
