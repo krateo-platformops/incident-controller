@@ -9,11 +9,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,7 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/krateo-platformops/plumbing/kubeutil/event"
+	prv1 "github.com/krateo-platformops/provider-runtime/apis/common/v1"
 	"github.com/krateo-platformops/provider-runtime/pkg/logging"
+	"github.com/krateo-platformops/provider-runtime/pkg/meta"
+	"github.com/krateo-platformops/provider-runtime/pkg/reconciler"
+	"github.com/krateo-platformops/provider-runtime/pkg/reconciler/reconcilertest"
 
 	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
 )
@@ -564,5 +571,240 @@ func TestTailBufferKeepsTheEnd(t *testing.T) {
 	_, _ = tb.Write([]byte("defg"))
 	if string(tb.b) != "defg" {
 		t.Errorf("want the last 4 bytes, got %q", tb.b)
+	}
+}
+
+// runningPod is the apply pod of ia, created at created and still running.
+func runningPod(ia *v1alpha1.IncidentApply, created time.Time) *corev1.Pod {
+	p := pods.ApplyPod(ia, applyCfg.Timeout)
+	p.CreationTimestamp = metav1.NewTime(created)
+	p.Status.Phase = corev1.PodRunning
+	return p
+}
+
+// Every success path of Observe must set Ready (provider-runtime's Ready contract): after a failed
+// Observe the runtime leaves Ready at NotObserved, and only an Observe replaces it. One case per
+// return of Observe, and per way to reach it, so a new path without a case stands out in review.
+func TestApplyObserveSetsReady(t *testing.T) {
+	now := policyAt.Add(time.Hour)
+	valid := now.Add(24 * time.Hour)
+	running := func(ia *v1alpha1.IncidentApply) {
+		ia.Status.Phase = v1alpha1.ApplyRunning
+		ia.Status.StartedAt = ptr.To(metav1.NewTime(now.Add(-10 * time.Second)))
+	}
+	finished := func(ia *v1alpha1.IncidentApply) {
+		ia.Status.Phase = v1alpha1.ApplySucceeded
+		ia.Status.FinishedAt = ptr.To(metav1.NewTime(now.Add(-time.Minute)))
+	}
+	cases := []struct {
+		name  string
+		apply *v1alpha1.IncidentApply
+		objs  func(ia *v1alpha1.IncidentApply) []client.Object
+		now   time.Time
+		obs   reconciler.ExternalObservation // the return reached, Diff aside
+		want  prv1.ConditionReason
+	}{
+		{
+			name: "deleted, apply pod left",
+			apply: newApply("a", now, func(ia *v1alpha1.IncidentApply) {
+				ia.DeletionTimestamp = ptr.To(metav1.NewTime(now))
+			}),
+			objs: func(ia *v1alpha1.IncidentApply) []client.Object { return []client.Object{runningPod(ia, now)} },
+			obs:  reconciler.ExternalObservation{ResourceExists: true},
+			want: prv1.ReasonDeleting,
+		},
+		{
+			name: "deleted, nothing left",
+			apply: newApply("a", now, func(ia *v1alpha1.IncidentApply) {
+				ia.DeletionTimestamp = ptr.To(metav1.NewTime(now))
+			}),
+			obs:  reconciler.ExternalObservation{ResourceExists: false},
+			want: prv1.ReasonDeleting,
+		},
+		{
+			name:  "admitted: the run is for Create",
+			apply: newApply("a", now.Add(-time.Second)),
+			objs: func(*v1alpha1.IncidentApply) []client.Object {
+				return []client.Object{newIncident(v1alpha1.StateOpen), credentials(t, "alice", "alice", valid)}
+			},
+			obs:  reconciler.ExternalObservation{ResourceExists: false},
+			want: prv1.ReasonAvailable,
+		},
+		{
+			name:  "rejected",
+			apply: newApply("a", now),
+			obs:   reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			want:  prv1.ReasonAvailable,
+		},
+		{
+			name: "interrupted before its pod was created",
+			apply: newApply("a", now, func(ia *v1alpha1.IncidentApply) {
+				meta.SetExternalCreatePending(ia, now.Add(-time.Minute))
+			}),
+			obs:  reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			want: prv1.ReasonAvailable,
+		},
+		{
+			name:  "its pod was created: the run started",
+			apply: newApply("a", now),
+			objs: func(ia *v1alpha1.IncidentApply) []client.Object {
+				return []client.Object{runningPod(ia, now.Add(-10*time.Second))}
+			},
+			obs:  reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			want: prv1.ReasonAvailable,
+		},
+		{
+			name:  "running",
+			apply: newApply("a", now, running),
+			objs: func(ia *v1alpha1.IncidentApply) []client.Object {
+				return []client.Object{runningPod(ia, now.Add(-10*time.Second))}
+			},
+			obs:  reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			want: prv1.ReasonAvailable,
+		},
+		{
+			name:  "the run finished",
+			apply: newApply("a", now, running),
+			objs: func(ia *v1alpha1.IncidentApply) []client.Object {
+				return []client.Object{newIncident(v1alpha1.StateOpen), finishedPod(ia, now.Add(-10*time.Second), 0)}
+			},
+			obs:  reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			want: prv1.ReasonAvailable,
+		},
+		{
+			name:  "the apply pod is gone mid-run",
+			apply: newApply("a", now, running),
+			obs:   reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			want:  prv1.ReasonAvailable,
+		},
+		{
+			name:  "finished, within its TTL",
+			apply: newApply("a", now, finished),
+			obs:   reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			want:  prv1.ReasonAvailable,
+		},
+		{
+			name:  "finished, past its TTL",
+			apply: newApply("a", now, finished),
+			now:   now.Add(applyCfg.TTL),
+			obs:   reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			want:  prv1.ReasonAvailable,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var objs []client.Object
+			if tc.objs != nil {
+				objs = tc.objs(tc.apply)
+			}
+			at := now
+			if !tc.now.IsZero() {
+				at = tc.now
+			}
+			e := newApplyEnv(t, objs...).external(at)
+			obs, err := reconcilertest.AssertObserveSetsReady(t, context.Background(), e, tc.apply)
+			if err != nil {
+				t.Fatal(err)
+			}
+			obs.Diff = ""
+			if d := cmp.Diff(tc.obs, obs); d != "" {
+				t.Errorf("observation (-want +got):\n%s", d)
+			}
+			if got := tc.apply.GetCondition(prv1.TypeReady).Reason; got != tc.want {
+				t.Errorf("Ready reason = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// Observe sets Available once it has read the apply pod. A read that fails after that fails
+// admitting or recording the run, not the Ready it set: the error is ReadyAssessed, so the runtime
+// keeps Available instead of replacing it with NotObserved.
+func TestApplyObserveErrorsAfterReadyAreReadyAssessed(t *testing.T) {
+	now := policyAt.Add(time.Hour)
+	errRead := errors.New("apiserver unavailable")
+	failGet := func(kind client.Object) interceptor.Funcs {
+		return interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+			if reflect.TypeOf(o) == reflect.TypeOf(kind) {
+				return errRead
+			}
+			return c.Get(ctx, key, o, opts...)
+		}}
+	}
+	cases := []struct {
+		name string
+		objs func(ia *v1alpha1.IncidentApply) []client.Object
+		fail interceptor.Funcs
+		want string
+	}{
+		{
+			name: "the run started, but its ConfigMap cannot be read",
+			objs: func(ia *v1alpha1.IncidentApply) []client.Object {
+				return []client.Object{runningPod(ia, now.Add(-10*time.Second))}
+			},
+			fail: failGet(&corev1.ConfigMap{}),
+			want: "cannot get apply ConfigMap",
+		},
+		{
+			name: "admission cannot read the incident",
+			fail: failGet(&v1alpha1.Incident{}),
+			want: "cannot get incident",
+		},
+		{
+			name: "admission cannot list the other requests",
+			objs: func(*v1alpha1.IncidentApply) []client.Object { return []client.Object{newIncident(v1alpha1.StateOpen)} },
+			fail: interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error { return errRead }},
+			want: "cannot list incidentapplies",
+		},
+		{
+			name: "admission cannot read the requester's credentials",
+			objs: func(*v1alpha1.IncidentApply) []client.Object { return []client.Object{newIncident(v1alpha1.StateOpen)} },
+			fail: failGet(&corev1.Secret{}),
+			want: "cannot get the credentials of alice",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ia := newApply("a", now)
+			var objs []client.Object
+			if tc.objs != nil {
+				objs = tc.objs(ia)
+			}
+			env := newApplyEnv(t, objs...)
+			e := env.external(now)
+			failing := interceptor.NewClient(env.kube.(client.WithWatch), tc.fail)
+			e.kube, e.reader = failing, failing
+
+			_, err := reconcilertest.AssertObserveSetsReady(t, context.Background(), e, ia)
+			if !reconciler.IsReadyAssessed(err) {
+				t.Fatalf("want a ReadyAssessed error, got %v", err)
+			}
+			if !errors.Is(err, errRead) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the error must keep its cause and say %q: %v", tc.want, err)
+			}
+			if got := ia.GetCondition(prv1.TypeReady).Reason; got != prv1.ReasonAvailable {
+				t.Errorf("Ready reason = %s, want %s", got, prv1.ReasonAvailable)
+			}
+		})
+	}
+}
+
+// A failed read of the apply pod means Observe could not tell: the error is not ReadyAssessed, so
+// the runtime sets Ready to NotObserved.
+func TestApplyObserveCannotTellReadyWhenThePodCannotBeRead(t *testing.T) {
+	now := policyAt.Add(time.Hour)
+	env := newApplyEnv(t)
+	e := env.external(now)
+	e.reader = interceptor.NewClient(env.kube.(client.WithWatch), interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return errors.New("apiserver unavailable")
+		},
+	})
+	_, err := e.Observe(context.Background(), newApply("a", now))
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if reconciler.IsReadyAssessed(err) {
+		t.Errorf("a failed read of the apply pod must leave Ready to the runtime: %v", err)
 	}
 }

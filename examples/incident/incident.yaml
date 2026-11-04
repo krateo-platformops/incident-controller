@@ -37,10 +37,13 @@ status:
     precondition: |
       #!/usr/bin/env bash
       # exit 1 = incident holds · exit 0 = gone
+      # Only Ready=True is gone. Ready=Unknown is not: since provider-runtime
+      # v1.8.0 it can be NotObserved, the controller could not observe the
+      # resource, which says nothing about whether it was fixed.
       s=$(kubectl get compositiondefinition fireworksapp -n fireworksapp-system \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
-      [ "$s" = "False" ] && exit 1
-      exit 0
+      [ "$s" = "True" ] && exit 0
+      exit 1
     apply: |
       #!/usr/bin/env bash
       # chart 1.1.9 is missing from the repo; 1.1.10 exists

@@ -109,6 +109,15 @@ run's result is read.
 | `WithPollInterval(1m)` | the 60 s check cadence; a poll-interval hook requeues when the next check falls due |
 | `krateo.io/paused` | pauses one incident: no checks, no transitions, `spec.closed` included |
 
+`Ready` follows provider-runtime's Ready contract (v1.8.0). Every Observe
+that succeeds sets it: `Available`, or `Deleting` once the Incident or
+IncidentApply is deleted. When Observe cannot read the check or apply pods,
+it returns a plain error, and the runtime sets `Ready` to
+`Unknown/NotObserved` next to `Synced=False`. An IncidentApply is `Available`
+once its pod is read; a later read that fails, while admitting or recording
+the run, fails the reconcile but keeps `Available`: the error is wrapped with
+`reconciler.ReadyAssessed`.
+
 A check is due a poll interval after the last one ended, or after the
 incident entered `Verifying` when that is later. The controller holds the end
 of each incident's last run in memory, so after a restart every check is due at

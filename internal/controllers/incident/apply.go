@@ -296,9 +296,16 @@ func (e *applyExternal) Observe(ctx context.Context, mg resource.Managed) (recon
 		return reconciler.ExternalObservation{}, err
 	}
 	if meta.WasDeleted(ia) {
+		// Every successful Observe sets Ready (provider-runtime's Ready contract), this one too:
+		// after a failed Observe, Ready is NotObserved until an Observe answers.
+		ia.SetConditions(prv1.Deleting())
 		return reconciler.ExternalObservation{ResourceExists: pod != nil}, nil
 	}
 	e.plan = applyPlan{base: ia.DeepCopy()}
+	// The IncidentApply is a request with no external resource: once its pod is read, it is
+	// Available whatever the steps below find. A read that fails below fails admitting or
+	// recording the run, not this assessment, so its error is wrapped with ReadyAssessed and
+	// the runtime keeps Available instead of replacing it with NotObserved.
 	ia.SetConditions(prv1.Available())
 	now := e.now()
 
@@ -306,7 +313,7 @@ func (e *applyExternal) Observe(ctx context.Context, mg resource.Managed) (recon
 		switch {
 		case pod != nil:
 			if err := e.started(ctx, ia, pod); err != nil {
-				return reconciler.ExternalObservation{}, err
+				return reconciler.ExternalObservation{}, reconciler.ReadyAssessed(err)
 			}
 		case meta.ExternalCreateIncomplete(ia):
 			// The pod is read past the cache, so it was never created.
@@ -314,7 +321,7 @@ func (e *applyExternal) Observe(ctx context.Context, mg resource.Managed) (recon
 		default:
 			why, start, err := e.admit(ctx, ia, now)
 			if err != nil {
-				return reconciler.ExternalObservation{}, err
+				return reconciler.ExternalObservation{}, reconciler.ReadyAssessed(err)
 			}
 			if why == "" {
 				e.plan.start = start

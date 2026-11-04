@@ -229,6 +229,9 @@ func (e *external) Observe(ctx context.Context, mg resource.Managed) (reconciler
 	}
 	if meta.WasDeleted(inc) {
 		e.runs.forget(inc.UID)
+		// Every successful Observe sets Ready (provider-runtime's Ready contract), this one too:
+		// after a failed Observe, Ready is NotObserved until an Observe answers.
+		inc.SetConditions(prv1.Deleting())
 		return reconciler.ExternalObservation{ResourceExists: len(pods)+len(cms) > 0}, nil
 	}
 

@@ -20,8 +20,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/krateo-platformops/plumbing/kubeutil/event"
+	prv1 "github.com/krateo-platformops/provider-runtime/apis/common/v1"
 	"github.com/krateo-platformops/provider-runtime/pkg/logging"
 	"github.com/krateo-platformops/provider-runtime/pkg/reconciler"
+	"github.com/krateo-platformops/provider-runtime/pkg/reconciler/reconcilertest"
 	"github.com/krateo-platformops/provider-runtime/pkg/test"
 
 	"github.com/krateo-platformops/incident-provider/apis/incident/v1alpha1"
@@ -330,6 +332,90 @@ func TestObserveDeleting(t *testing.T) {
 				t.Errorf("ResourceExists = %v, want %v", obs.ResourceExists, tc.want)
 			}
 		})
+	}
+}
+
+// Every success path of Observe must set Ready (provider-runtime's Ready contract): after a failed
+// Observe the runtime leaves Ready at NotObserved, and only an Observe replaces it. One case per
+// return of Observe, so a new path without a case stands out in review.
+func TestObserveSetsReady(t *testing.T) {
+	now := t0.Add(10 * time.Minute)
+	deleted := func(i *v1alpha1.Incident) { i.DeletionTimestamp = ptr.To(metav1.NewTime(t0)) }
+	cases := []struct {
+		name    string
+		inc     *v1alpha1.Incident
+		pods    func(inc *v1alpha1.Incident) []corev1.Pod
+		lastRun time.Time
+		obs     reconciler.ExternalObservation // the return reached, Diff aside
+		want    prv1.ConditionReason
+	}{
+		{
+			name: "deleted, check pods left",
+			inc:  newIncident(v1alpha1.StateOpen, deleted),
+			pods: func(inc *v1alpha1.Incident) []corev1.Pod {
+				return []corev1.Pod{checkPod(inc, v1alpha1.ScriptPrecondition, t0, nil, time.Time{})}
+			},
+			obs:  reconciler.ExternalObservation{ResourceExists: true},
+			want: prv1.ReasonDeleting,
+		},
+		{
+			name: "deleted, nothing left",
+			inc:  newIncident(v1alpha1.StateOpen, deleted),
+			obs:  reconciler.ExternalObservation{ResourceExists: false},
+			want: prv1.ReasonDeleting,
+		},
+		{
+			name: "out of date: a check is due",
+			inc:  newIncident(v1alpha1.StateOpen),
+			obs:  reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: false},
+			want: prv1.ReasonAvailable,
+		},
+		{
+			name:    "up to date",
+			inc:     newIncident(v1alpha1.StateOpen),
+			lastRun: now.Add(-30 * time.Second),
+			obs:     reconciler.ExternalObservation{ResourceExists: true, ResourceUpToDate: true},
+			want:    prv1.ReasonAvailable,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p []corev1.Pod
+			if tc.pods != nil {
+				p = tc.pods(tc.inc)
+			}
+			e := newExternal(newKube(p...), now)
+			if !tc.lastRun.IsZero() {
+				e.runs.seen(tc.inc.UID, tc.lastRun)
+			}
+			obs, err := reconcilertest.AssertObserveSetsReady(t, context.Background(), e, tc.inc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			obs.Diff = ""
+			if d := cmp.Diff(tc.obs, obs); d != "" {
+				t.Errorf("observation (-want +got):\n%s", d)
+			}
+			if got := tc.inc.GetCondition(prv1.TypeReady).Reason; got != tc.want {
+				t.Errorf("Ready reason = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A failed read of the check pods means Observe could not tell: the error is not ReadyAssessed, so
+// the runtime sets Ready to NotObserved.
+func TestObserveCannotTellReadyWhenTheChecksCannotBeRead(t *testing.T) {
+	k := newKube()
+	k.MockList = func(context.Context, client.ObjectList, ...client.ListOption) error {
+		return errors.New("apiserver unavailable")
+	}
+	_, err := newExternal(k, t0).Observe(context.Background(), newIncident(v1alpha1.StateOpen))
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if reconciler.IsReadyAssessed(err) {
+		t.Errorf("a failed read must leave Ready to the runtime: %v", err)
 	}
 }
 
