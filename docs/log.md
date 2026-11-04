@@ -12,16 +12,17 @@ timestamp: 2026-11-04T00:00:00Z
 Curated history — notable changes and decisions, newest first. Full release
 notes live in GitHub Releases. Entries record what was true when written.
 
-## 2026-11-04 — provider-runtime v1.8.1: the Ready contract (unreleased)
+## 2026-11-04 — provider-runtime v1.8.2: the Ready contract (unreleased)
 
-provider-runtime v1.8.0 (taken at v1.8.1) sets `Ready` to `Unknown/NotObserved` when Connect or
-Observe fails, and expects every Observe that succeeds to set `Ready` again;
-one that doesn't gets a `ReadyNotSetAfterObserve` Warning; v1.8.1 exempts
-resources being deleted, where the runtime sets `Deleting` itself. Both
-controllers already set `Available` on their main paths. Changed:
-- The deletion paths of both Observes set `Deleting`, so every successful
-  Observe answers `Ready`, and an Observe error on a later deletion pass
-  keeps `Deleting` rather than `NotObserved`.
+provider-runtime v1.8.0 (taken at v1.8.2) sets `Ready` to
+`Unknown/NotObserved` when Connect or Observe fails, and expects every
+Observe that succeeds to set `Ready` again; one that doesn't gets a
+`ReadyNotSetAfterObserve` Warning. On a resource being deleted the runtime
+answers `Ready=Deleting` itself: after a successful Observe since v1.8.1, and
+after a failed one since v1.8.2. Both controllers already set `Available` on
+their main paths. Changed:
+- The deletion paths of both Observes set `Deleting`. The runtime doesn't
+  require it there; it keeps every successful Observe answering `Ready`.
 - The IncidentApply's errors after it set `Available` (reading the run's
   ConfigMap, admission's reads) are wrapped with `reconciler.ReadyAssessed`,
   so the runtime keeps `Available` next to the error.

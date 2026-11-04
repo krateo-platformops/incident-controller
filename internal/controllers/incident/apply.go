@@ -296,9 +296,9 @@ func (e *applyExternal) Observe(ctx context.Context, mg resource.Managed) (recon
 		return reconciler.ExternalObservation{}, err
 	}
 	if meta.WasDeleted(ia) {
-		// A deleted IncidentApply is Deleting. The runtime sets that too on its deletion paths, so
-		// provider-runtime doesn't require it here (v1.8.1); setting it keeps every successful
-		// Observe answering Ready, and a later Observe error keeps Deleting, not NotObserved.
+		// A deleted IncidentApply is Deleting. provider-runtime sets that itself while it deletes, after
+		// a successful Observe and after a failed one (v1.8.2), so this write is not required;
+		// it keeps every successful Observe answering Ready.
 		ia.SetConditions(prv1.Deleting())
 		return reconciler.ExternalObservation{ResourceExists: pod != nil}, nil
 	}

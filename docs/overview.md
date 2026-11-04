@@ -113,7 +113,8 @@ run's result is read.
 that succeeds sets it: `Available`, or `Deleting` once the Incident or
 IncidentApply is deleted. When Observe cannot read the check or apply pods,
 it returns a plain error, and the runtime sets `Ready` to
-`Unknown/NotObserved` next to `Synced=False`. An IncidentApply is `Available`
+`Unknown/NotObserved` next to `Synced=False`, or to `Deleting` on a deleted
+object. An IncidentApply is `Available`
 once its pod is read; a later read that fails, while admitting or recording
 the run, fails the reconcile but keeps `Available`: the error is wrapped with
 `reconciler.ReadyAssessed`.
